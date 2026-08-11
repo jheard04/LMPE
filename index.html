@@ -1,0 +1,1982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LMPE Pick 'em League</title>
+
+<!-- Tailwind (JIT, in-browser, no build step needed) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- React + ReactDOM (UMD builds, no bundler required) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+<!-- Babel standalone: lets the browser run the JSX below directly, no build step -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Firebase (compat SDK — simplest global-namespace API, no bundler needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; background: #0A1628; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  // =====================================================================
+  // FIREBASE SETUP — REQUIRED BEFORE THIS APP WILL WORK
+  // =====================================================================
+  // 1. Go to https://console.firebase.google.com and create a free project
+  //    (takes about 2 minutes, no credit card required).
+  // 2. In the left sidebar, go to "Build" -> "Realtime Database" -> "Create Database".
+  //    Choose any region, and start in "test mode" for now (we set proper
+  //    rules below anyway).
+  // 3. In Project Settings (gear icon, top left) -> "General" tab, scroll to
+  //    "Your apps", click the </> (web) icon to register a new web app.
+  // 4. It will show you a firebaseConfig object. Copy it and paste it below,
+  //    replacing the placeholder values.
+  // 5. Back in the Realtime Database section, click the "Rules" tab and
+  //    paste this (then click Publish):
+  //
+  //      {
+  //        "rules": {
+  //          ".read": true,
+  //          ".write": true
+  //        }
+  //      }
+  //
+  //    NOTE: this makes the database fully open to anyone who has your
+  //    databaseURL — the same trust model this app already uses for its
+  //    shared admin/player passwords (not real security, just a casual
+  //    shared league). Good enough for this use case, but know that it's
+  //    open, the same way the Claude-hosted version was.
+  // =====================================================================
+  const firebaseConfig = {
+    apiKey: "AIzaSyBq1uc09gn3estwAyjIeZm78_qO-h6Ycew",
+    authDomain: "lmpe-e6b19.firebaseapp.com",
+    databaseURL: "https://lmpe-e6b19-default-rtdb.firebaseio.com",
+    projectId: "lmpe-e6b19",
+    storageBucket: "lmpe-e6b19.firebasestorage.app",
+    messagingSenderId: "868504900626",
+    appId: "1:868504900626:web:c30cb2e663aec8b7b434cb",
+    measurementId: "G-N021LFM9G4",
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  // Firebase Realtime Database keys can't contain ".", "#", "$", "[", "]", "/"
+  // Our storage keys use ":" freely, which IS allowed, but let's be safe and
+  // escape anything else just in case.
+  function safeDbKey(key) {
+    return key.replace(/[.#$\[\]\/]/g, "_");
+  }
+
+  // This reimplements the exact same get/set/delete/list interface the app
+  // already expects (originally backed by Claude's window.storage) — so the
+  // rest of the app's code needs ZERO changes. "shared" data goes to
+  // Firebase (genuinely shared across every visitor); "personal" data goes
+  // to this browser's own localStorage (exactly matching the original
+  // per-browser behavior for things like your remembered username).
+  window.storage = {
+    async get(key, shared) {
+      if (!shared) {
+        const v = localStorage.getItem("personal:" + key);
+        if (v === null) throw new Error("not found");
+        return { key, value: v, shared };
+      }
+      const snap = await db.ref("shared/" + safeDbKey(key)).get();
+      if (!snap.exists()) throw new Error("not found");
+      return { key, value: snap.val(), shared };
+    },
+    async set(key, value, shared) {
+      if (!shared) {
+        localStorage.setItem("personal:" + key, value);
+        return { key, value, shared };
+      }
+      await db.ref("shared/" + safeDbKey(key)).set(value);
+      return { key, value, shared };
+    },
+    async delete(key, shared) {
+      if (!shared) {
+        localStorage.removeItem("personal:" + key);
+        return { key, deleted: true, shared };
+      }
+      await db.ref("shared/" + safeDbKey(key)).remove();
+      return { key, deleted: true, shared };
+    },
+    async list(prefix, shared) {
+      if (!shared) {
+        const keys = Object.keys(localStorage)
+          .filter((k) => k.startsWith("personal:" + (prefix || "")))
+          .map((k) => k.slice("personal:".length));
+        return { keys, prefix, shared };
+      }
+      const snap = await db.ref("shared").get();
+      const all = snap.exists() ? Object.keys(snap.val()) : [];
+      return { keys: all, prefix, shared };
+    },
+  };
+</script>
+
+<script type="text/babel" data-presets="react">
+  const { useState, useEffect, useMemo } = React;
+
+  /* ================= APP CODE BELOW — unchanged from the Claude-hosted version ================= */
+
+  
+/* ------------------------------------------------------------------ *
+ *  LMPE — multi-season ATS/O-U pick 'em league
+ *  seasons:   { list: [{id, name, createdAt}], activeSeasonId }  (shared, global)
+ *  passwords: { [username]: sha256Hex }  (shared, global — spans all seasons)
+ *  admin-pass: shared string, global (simple shared gate, not real security)
+ *  my-identity / my-team: personal (shared:false), global
+ *
+ *  Per-season (season-1 uses the original un-prefixed keys so existing
+ *  data isn't lost; every later season gets its own prefixed set):
+ *  meta:    { currentWeek }
+ *  roster:  { usernames: string[], teamNames: {username: teamName}, locked, pinnedCount }
+ *  weeks:   { [weekNum]: { games: [Game], deadline (ISO), locked } }
+ *  picks:   { [weekNum]: { [username]: Pick[] } }
+ *  ledger:  { adjustments: [{id, username, field:'paid'|'won', amount, note}] }
+ * ------------------------------------------------------------------ */
+
+const DEFAULT_SEASON_NAME = "LMPE 2026";
+const KEYS = {
+  seasons: "pickem:seasons",
+  passwords: "pickem:passwords",
+  adminPass: "pickem:admin-pass",
+  adminRecovery: "pickem:admin-recovery",
+};
+function seasonKeys(seasonId) {
+  const prefix = seasonId === "season-1" ? "pickem:" : `pickem:${seasonId}:`;
+  return {
+    meta: `${prefix}meta`,
+    roster: `${prefix}roster`,
+    weeks: `${prefix}weeks`,
+    picks: `${prefix}picks`,
+    ledger: `${prefix}ledger`,
+    comments: `${prefix}comments`,
+  };
+}
+const PICKS_PER_WEEK = 5;
+const ENTRY_FEE = 5;
+const MAX_WEEKS = 19;
+
+async function loadJSON(key, fallback, shared = true) {
+  try {
+    const r = await window.storage.get(key, shared);
+    return r ? JSON.parse(r.value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+async function saveJSON(key, value, shared = true) {
+  await window.storage.set(key, JSON.stringify(value), shared);
+}
+function newId() {
+  return Math.random().toString(36).slice(2, 9);
+}
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+/** e.g. "K7QX-9F2M-P4RT" — random, unambiguous (no 0/O/1/I), easy to read and retype. */
+function generateRecoveryCode() {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const raw = Array.from(bytes).map((b) => chars[b % chars.length]).join("");
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
+}
+
+/** Convert a wall-clock time in America/Denver to a correct UTC Date, DST-safe. */
+function denverWallTimeToUTC(y, m, d, h, min) {
+  const guess = new Date(Date.UTC(y, m, d, h, min));
+  const asDenver = new Date(guess.toLocaleString("en-US", { timeZone: "America/Denver" }));
+  const asUTC = new Date(guess.toLocaleString("en-US", { timeZone: "UTC" }));
+  const diff = asUTC.getTime() - asDenver.getTime();
+  return new Date(guess.getTime() + diff);
+}
+function nextSundayMT10ISO() {
+  return sundayMT10ISOFor(new Date().toISOString());
+}
+/** Sunday 10am MT of the week containing referenceISO (0 days added if referenceISO is already Sunday). */
+function sundayMT10ISOFor(referenceISO) {
+  const ref = new Date(referenceISO);
+  const denverParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" }).formatToParts(ref);
+  const y = +denverParts.find((p) => p.type === "year").value;
+  const mo = +denverParts.find((p) => p.type === "month").value - 1;
+  const d = +denverParts.find((p) => p.type === "day").value;
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const wd = weekdayMap[denverParts.find((p) => p.type === "weekday").value];
+  const add = (7 - wd) % 7; // 0 if referenceISO is already a Sunday
+  const target = denverWallTimeToUTC(y, mo, d + add, 10, 0);
+  return target.toISOString();
+}
+
+function isWeekLocked(week) {
+  if (!week) return false;
+  if (week.locked) return true;
+  if (week.deadline && Date.now() > new Date(week.deadline).getTime()) return true;
+  return false;
+}
+function isWeekRevealed(week) {
+  return isWeekLocked(week);
+}
+/** A single pick is visible to other players as soon as its game starts, or the whole week once the deadline passes. */
+function isPickRevealed(game, week) {
+  if (game && isGameLocked(game)) return true;
+  return isWeekLocked(week);
+}
+function isGameLocked(game) {
+  return !!(game.kickoff && Date.now() > new Date(game.kickoff).getTime());
+}
+
+/** Derive spread/total outcome from a game's numeric lines + final scores. Returns null if no score yet. */
+function computeGameResult(game) {
+  if (game.finalScoreA == null || game.finalScoreB == null) return null;
+  const a = Number(game.finalScoreA), b = Number(game.finalScoreB);
+  const spreadA = Number(game.spreadA || 0);
+  const adjA = a + spreadA;
+  let spreadWinner;
+  if (adjA > b) spreadWinner = "teamA";
+  else if (adjA < b) spreadWinner = "teamB";
+  else spreadWinner = "push";
+  const sum = a + b;
+  const total = Number(game.total || 0);
+  let totalResult;
+  if (sum > total) totalResult = "over";
+  else if (sum < total) totalResult = "under";
+  else totalResult = "push";
+  return { spreadWinner, totalResult };
+}
+
+/** 'win' | 'loss' | 'pending' */
+function scorePick(pick, game) {
+  const res = computeGameResult(game);
+  if (!res) return "pending";
+  if (pick.type === "spread") {
+    return res.spreadWinner === "push" ? "loss" : pick.selection === res.spreadWinner ? "win" : "loss";
+  } else {
+    return res.totalResult === "push" ? "loss" : pick.selection === res.totalResult ? "win" : "loss";
+  }
+}
+
+const BET_OPTIONS = (game) => ({
+  spread: [
+    { value: "teamA", label: `${game.teamA} ${fmtSpread(game.spreadA)}` },
+    { value: "teamB", label: `${game.teamB} ${fmtSpread(-Number(game.spreadA || 0))}` },
+  ],
+  total: [
+    { value: "over", label: `Over ${game.total ?? ""}` },
+    { value: "under", label: `Under ${game.total ?? ""}` },
+  ],
+});
+function fmtSpread(n) {
+  const v = Number(n || 0);
+  return v > 0 ? `+${v}` : `${v}`;
+}
+function fmtKickoff(iso) {
+  if (!iso) return "time TBD";
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+/** Always shows the time in Mountain Time explicitly, regardless of the viewer's own timezone — used for the pick deadline. */
+function fmtMountainTime(iso) {
+  if (!iso) return "TBD";
+  return new Date(iso).toLocaleString("en-US", { timeZone: "America/Denver", weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) + " MT";
+}
+/** Converts a stored UTC ISO string into the "YYYY-MM-DDTHH:MM" the browser's local time expects
+ * for a <input type="datetime-local"> value. toISOString() alone would show raw UTC digits
+ * mislabeled as local time, which is exactly the "shows 4pm instead of 10am" bug this fixes. */
+function toLocalDatetimeValue(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - off).toISOString().slice(0, 16);
+}
+/** Day-of-week + 24-hour time, used only to confirm the admin's import date-range boundaries unambiguously. */
+function fmtMilitary(localDatetimeValue) {
+  if (!localDatetimeValue) return "";
+  const d = new Date(localDatetimeValue);
+  return d.toLocaleString(undefined, { weekday: "short", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+function sortByKickoff(games) {
+  return [...games].sort((a, b) => {
+    if (!a.kickoff && !b.kickoff) return 0;
+    if (!a.kickoff) return 1;
+    if (!b.kickoff) return -1;
+    return new Date(a.kickoff) - new Date(b.kickoff);
+  });
+}
+/** Sunday 10am MT of the week containing the earliest scheduled game, or null if no games have a kickoff yet. */
+function deadlineFromGames(games) {
+  const withKickoff = games.filter((g) => g.kickoff);
+  if (withKickoff.length === 0) return null;
+  const earliest = sortByKickoff(withKickoff)[0];
+  return sundayMT10ISOFor(earliest.kickoff);
+}
+
+/** Standings across all locked/scored weeks, including ledger adjustments. */
+function computeStandings(roster, weeksData, picksData, ledger) {
+  const usernames = roster.usernames || [];
+  const stats = {};
+  usernames.forEach((u) => (stats[u] = { username: u, teamName: roster.teamNames?.[u] || u, wins: 0, losses: 0, weeksPlayed: 0, totalPaid: 0, totalWon: 0, perfectWeeks: 0, wonWeeks: [], oferOwed: 0, oferWeeks: [] }));
+
+  const potBase = roster.pinnedCount ?? usernames.length;
+  const weekNums = Object.keys(weeksData || {}).map(Number).sort((a, b) => a - b);
+  let carryPot = 0;
+  let oferPotTotal = 0;
+  const weeklyLeagueStats = {};
+
+  weekNums.forEach((wn) => {
+    const week = weeksData[wn];
+    if (!week) return;
+    const hasResults = week.games?.length > 0 && week.games.every((g) => computeGameResult(g) !== null);
+    if (!hasResults) return;
+
+    const winnersThisWeek = [];
+    const winsByUser = {};
+    let leagueCorrect = 0, leagueTotal = 0;
+    usernames.forEach((u) => {
+      stats[u].totalPaid += ENTRY_FEE;
+      stats[u].weeksPlayed += 1;
+      const userPicks = (picksData[wn] && picksData[wn][u]) || [];
+      let wCount = 0, lCount = 0;
+      userPicks.slice(0, PICKS_PER_WEEK).forEach((p) => {
+        const game = week.games.find((g) => g.id === p.gameId);
+        if (!game) return;
+        const outcome = scorePick(p, game);
+        if (outcome === "win") wCount++;
+        else if (outcome === "loss") lCount++;
+      });
+      const missing = Math.max(0, PICKS_PER_WEEK - userPicks.length);
+      lCount += missing;
+      stats[u].wins += wCount;
+      stats[u].losses += lCount;
+      winsByUser[u] = wCount;
+      leagueCorrect += wCount;
+      leagueTotal += wCount + lCount;
+      if (hasResults && missing === 0 && wCount === PICKS_PER_WEEK) {
+        stats[u].perfectWeeks += 1;
+        winnersThisWeek.push(u);
+      }
+    });
+    weeklyLeagueStats[wn] = { correct: leagueCorrect, total: leagueTotal, pct: leagueTotal ? (leagueCorrect / leagueTotal) * 100 : 0 };
+
+    if (hasResults) {
+      usernames.forEach((u) => {
+        if (winsByUser[u] === 0) {
+          stats[u].oferOwed += ENTRY_FEE;
+          stats[u].oferWeeks.push(wn);
+          oferPotTotal += ENTRY_FEE;
+        }
+      });
+      const potThisWeek = ENTRY_FEE * potBase + carryPot;
+      if (winnersThisWeek.length > 0) {
+        const share = potThisWeek / winnersThisWeek.length;
+        winnersThisWeek.forEach((u) => { stats[u].totalWon += share; stats[u].wonWeeks.push(wn); });
+        carryPot = 0;
+      } else {
+        carryPot = potThisWeek;
+      }
+    }
+  });
+
+  (ledger?.adjustments || []).forEach((adj) => {
+    if (!stats[adj.username]) return;
+    if (adj.field === "paid") stats[adj.username].totalPaid += Number(adj.amount);
+    else stats[adj.username].totalWon += Number(adj.amount);
+  });
+
+  return { rows: usernames.map((u) => stats[u]), carryPot, oferPotTotal, weeklyLeagueStats };
+}
+
+function buildCSV(headers, rows) {
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  return [headers.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
+}
+function tryDownloadBlob(filename, blob) {
+  try {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function tryDownloadCSV(filename, csv) {
+  return tryDownloadBlob(filename, new Blob([csv], { type: "text/csv" }));
+}
+
+/* ---- Minimal from-scratch XLSX writer (raw ZIP, no libraries) ----
+ * The bundled SheetJS build can't write cell styles (fills/colors) —
+ * that's a paid-tier feature — so real win/loss coloring means
+ * building the .xlsx package by hand: it's just a ZIP of XML files. */
+function crc32(buf) {
+  if (!crc32.table) {
+    const t = [];
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    crc32.table = t;
+  }
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) crc = (crc >>> 8) ^ crc32.table[(crc ^ buf[i]) & 0xff];
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function concatBytes(arrs) {
+  const total = arrs.reduce((a, b) => a + b.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  arrs.forEach((a) => { out.set(a, o); o += a.length; });
+  return out;
+}
+function buildZip(files) {
+  const enc = new TextEncoder();
+  let offset = 0;
+  const localParts = [];
+  const records = [];
+  files.forEach((f) => {
+    const nameBytes = enc.encode(f.name);
+    const data = f.data;
+    const crc = crc32(data);
+    const dv = new DataView(new ArrayBuffer(30));
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 0, true);
+    dv.setUint16(8, 0, true); // store, no compression
+    dv.setUint16(10, 0, true);
+    dv.setUint16(12, 0x21, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, data.length, true);
+    dv.setUint32(22, data.length, true);
+    dv.setUint16(26, nameBytes.length, true);
+    dv.setUint16(28, 0, true);
+    const entry = concatBytes([new Uint8Array(dv.buffer), nameBytes, data]);
+    records.push({ nameBytes, crc, size: data.length, offset });
+    offset += entry.length;
+    localParts.push(entry);
+  });
+  const centralParts = records.map((r) => {
+    const dv = new DataView(new ArrayBuffer(46));
+    dv.setUint32(0, 0x02014b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 20, true);
+    dv.setUint16(8, 0, true);
+    dv.setUint16(10, 0, true);
+    dv.setUint16(12, 0, true);
+    dv.setUint16(14, 0x21, true);
+    dv.setUint32(16, r.crc, true);
+    dv.setUint32(20, r.size, true);
+    dv.setUint32(24, r.size, true);
+    dv.setUint16(28, r.nameBytes.length, true);
+    dv.setUint16(30, 0, true);
+    dv.setUint16(32, 0, true);
+    dv.setUint16(34, 0, true);
+    dv.setUint16(36, 0, true);
+    dv.setUint32(38, 0, true);
+    dv.setUint32(42, r.offset, true);
+    return concatBytes([new Uint8Array(dv.buffer), r.nameBytes]);
+  });
+  const centralDirSize = centralParts.reduce((a, p) => a + p.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, records.length, true);
+  end.setUint16(10, records.length, true);
+  end.setUint32(12, centralDirSize, true);
+  end.setUint32(16, offset, true);
+  return concatBytes([...localParts, ...centralParts, new Uint8Array(end.buffer)]);
+}
+function colLetter(i) {
+  let s = "";
+  i += 1;
+  while (i > 0) {
+    const r = (i - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    i = Math.floor((i - 1) / 26);
+  }
+  return s;
+}
+function xmlEscape(v) {
+  return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+/** styleForCell(rowIdx, colIdx, value, isHeader) -> 0 default, 1 bold header, 2 green, 3 red */
+function buildXlsxBytes(headers, rows, styleForCell) {
+  const enc = new TextEncoder();
+  const allRows = [headers, ...rows];
+  let sheetRows = "";
+  allRows.forEach((row, r) => {
+    const isHeader = r === 0;
+    let cells = "";
+    row.forEach((val, c) => {
+      const s = isHeader ? 1 : styleForCell(r - 1, c, val);
+      const ref = `${colLetter(c)}${r + 1}`;
+      if (val === "" || val == null) {
+        cells += `<c r="${ref}" s="${s}"/>`;
+      } else if (typeof val === "number" && Number.isFinite(val)) {
+        cells += `<c r="${ref}" s="${s}"><v>${val}</v></c>`;
+      } else {
+        cells += `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(val)}</t></is></c>`;
+      }
+    });
+    sheetRows += `<row r="${r + 1}">${cells}</row>`;
+  });
+
+  const colCount = headers.length;
+  const colWidths = Array.from({ length: colCount }, (_, c) => {
+    const maxLen = allRows.reduce((m, row) => Math.max(m, String(row[c] ?? "").length), 0);
+    return Math.min(60, Math.max(8, maxLen + 2));
+  });
+  const cols = `<cols>${colWidths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>`;
+
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
+  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFC7CE"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="10"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1"/><xf numFmtId="9" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/><xf numFmtId="9" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/></cellXfs></styleSheet>`;
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>${sheetRows}</sheetData></worksheet>`;
+
+  const files = [
+    { name: "[Content_Types].xml", data: enc.encode(contentTypes) },
+    { name: "_rels/.rels", data: enc.encode(rootRels) },
+    { name: "xl/workbook.xml", data: enc.encode(workbook) },
+    { name: "xl/_rels/workbook.xml.rels", data: enc.encode(workbookRels) },
+    { name: "xl/styles.xml", data: enc.encode(styles) },
+    { name: "xl/worksheets/sheet1.xml", data: enc.encode(sheet) },
+  ];
+  return buildZip(files);
+}
+function tryDownloadXlsx(filename, headers, rows, styleForCell) {
+  const bytes = buildXlsxBytes(headers, rows, styleForCell);
+  return tryDownloadBlob(filename, new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+}
+
+/* ------------------------------------------------------------------ */
+
+function TicketCard({ children, accent }) {
+  return (
+    <div className="relative rounded-md" style={{ background: "var(--surface)", border: "1px dashed var(--hairline)" }}>
+      <div className="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full" style={{ background: "var(--bg)" }} />
+      <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full" style={{ background: "var(--bg)" }} />
+      {accent && <div className="h-1 rounded-t-md" style={{ background: accent }} />}
+      <div className="p-4">{children}</div>
+    </div>
+  );
+}
+function Pill({ tone = "muted", children }) {
+  const map = {
+    win: { bg: "rgba(76,154,106,0.18)", color: "var(--win)" },
+    loss: { bg: "rgba(192,82,75,0.18)", color: "var(--loss)" },
+    pending: { bg: "rgba(212,175,55,0.15)", color: "var(--gold)" },
+    muted: { bg: "rgba(139,148,163,0.15)", color: "var(--muted)" },
+  };
+  const s = map[tone];
+  return (
+    <span className="px-2 py-0.5 rounded text-xs font-mono uppercase tracking-wide" style={{ background: s.bg, color: s.color }}>
+      {children}
+    </span>
+  );
+}
+function Section({ title, children }) {
+  return (
+    <div>
+      <h2 className="display-font text-sm uppercase tracking-wider mb-3" style={{ color: "var(--gold)" }}>{title}</h2>
+      {children}
+    </div>
+  );
+}
+function EmptyState({ text }) {
+  return (
+    <div className="text-center py-12 text-sm rounded-md" style={{ color: "var(--muted)", border: "1px dashed var(--hairline)" }}>
+      {text}
+    </div>
+  );
+}
+function inputStyle() {
+  return { background: "var(--bg)", border: "1px solid var(--hairline)", color: "var(--text)" };
+}
+
+/* ------------------------------------------------------------------ */
+
+function PickemLeague() {
+  const [loading, setLoading] = useState(true);
+  const [seasonLoading, setSeasonLoading] = useState(true);
+  const [seasons, setSeasons] = useState({ list: [{ id: "season-1", name: DEFAULT_SEASON_NAME, createdAt: "" }], activeSeasonId: "season-1" });
+  const [viewingSeasonId, setViewingSeasonId] = useState("season-1");
+  const [meta, setMeta] = useState({ currentWeek: 1 });
+  const [roster, setRoster] = useState({ usernames: [], teamNames: {}, locked: false, pinnedCount: null });
+  const [weeksData, setWeeksData] = useState({});
+  const [picksData, setPicksData] = useState({});
+  const [ledger, setLedger] = useState({ adjustments: [] });
+  const [comments, setComments] = useState("");
+  const [passwords, setPasswords] = useState({});
+  const [adminPass, setAdminPass] = useState(null);
+  const [adminRecoveryHash, setAdminRecoveryHash] = useState(null);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [identity, setIdentity] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [authedUser, setAuthedUser] = useState(null);
+  const [pwInput, setPwInput] = useState("");
+  const [authMsg, setAuthMsg] = useState("");
+  const [tab, setTab] = useState("picks");
+  const [historyWeek, setHistoryWeek] = useState(1);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  // Global data: loaded once — seasons registry (self-healing if this is the very first run),
+  // cross-season passwords, admin password, and this browser's remembered username.
+  useEffect(() => {
+    (async () => {
+      let [s, pw, ap, arh, id] = await Promise.all([
+        loadJSON(KEYS.seasons, null),
+        loadJSON(KEYS.passwords, {}),
+        loadJSON(KEYS.adminPass, null),
+        loadJSON(KEYS.adminRecovery, null),
+        (async () => { try { const res = await window.storage.get("pickem:my-identity", false); return res ? res.value : ""; } catch { return ""; } })(),
+      ]);
+      if (!s || !s.list || s.list.length === 0) {
+        s = { list: [{ id: "season-1", name: DEFAULT_SEASON_NAME, createdAt: new Date().toISOString() }], activeSeasonId: "season-1" };
+        await saveJSON(KEYS.seasons, s);
+      }
+      setSeasons(s);
+      setViewingSeasonId(s.activeSeasonId);
+      setPasswords(pw);
+      setAdminPass(ap);
+      setAdminRecoveryHash(arh);
+      setIdentity(id);
+      setLoading(false);
+    })();
+  }, []);
+
+  // Per-season data: reloaded any time the viewed season changes.
+  useEffect(() => {
+    if (loading) return;
+    setSeasonLoading(true);
+    const keys = seasonKeys(viewingSeasonId);
+    (async () => {
+      const [m, r, w, p, l, c] = await Promise.all([
+        loadJSON(keys.meta, { currentWeek: 1 }),
+        loadJSON(keys.roster, { usernames: [], teamNames: {}, locked: false, pinnedCount: null }),
+        loadJSON(keys.weeks, {}),
+        loadJSON(keys.picks, {}),
+        loadJSON(keys.ledger, { adjustments: [] }),
+        loadJSON(keys.comments, ""),
+      ]);
+      setMeta(m); setRoster(r); setWeeksData(w); setPicksData(p); setLedger(l); setComments(c);
+      setHistoryWeek(m.currentWeek);
+      setAuthedUser(null);
+      setSeasonLoading(false);
+    })();
+  }, [viewingSeasonId, loading]);
+
+  const flash = (msg) => { setSaveMsg(msg); setTimeout(() => setSaveMsg(""), 2200); };
+
+
+  const persistRoster = async (next) => { setRoster(next); await saveJSON(seasonKeys(viewingSeasonId).roster, next); };
+  const persistWeeks = async (next) => { setWeeksData(next); await saveJSON(seasonKeys(viewingSeasonId).weeks, next); };
+  const persistPicks = async (next) => { setPicksData(next); await saveJSON(seasonKeys(viewingSeasonId).picks, next); };
+  const persistMeta = async (next) => { setMeta(next); await saveJSON(seasonKeys(viewingSeasonId).meta, next); };
+  const persistLedger = async (next) => { setLedger(next); await saveJSON(seasonKeys(viewingSeasonId).ledger, next); };
+  const persistComments = async (next) => { setComments(next); await saveJSON(seasonKeys(viewingSeasonId).comments, next); };
+  const persistPasswords = async (next) => { setPasswords(next); await saveJSON(KEYS.passwords, next); };
+  const persistSeasons = async (next) => { setSeasons(next); await saveJSON(KEYS.seasons, next); };
+  const persistAdminPass = async (pw) => { setAdminPass(pw); await saveJSON(KEYS.adminPass, pw); };
+  const persistAdminRecoveryHash = async (h) => { setAdminRecoveryHash(h); await saveJSON(KEYS.adminRecovery, h); };
+  const persistIdentity = async (name) => {
+    setIdentity(name);
+    setAuthMsg("");
+    setPwInput("");
+    if (authedUser && authedUser !== name.trim()) setAuthedUser(null);
+    try { await window.storage.set("pickem:my-identity", name, false); } catch {}
+  };
+  const persistTeamName = async (name) => {
+    if (authedUser !== identity.trim()) return;
+    setTeamName(name);
+    if (identity.trim()) {
+      const next = { ...roster, teamNames: { ...roster.teamNames, [identity.trim()]: name } };
+      await persistRoster(next);
+    }
+  };
+  const handleUnlockOrClaim = async () => {
+    const uname = identity.trim();
+    if (!uname) { setAuthMsg("Enter a username first."); return; }
+    const existingHash = passwords?.[uname];
+    const entered = await sha256Hex(pwInput);
+    if (existingHash) {
+      if (entered !== existingHash) { setAuthMsg("Wrong password."); return; }
+      if (roster.locked && !roster.usernames.includes(uname)) { setAuthMsg("Roster is locked for this season — ask the admin to add you first."); return; }
+      if (!roster.usernames.includes(uname)) await persistRoster({ ...roster, usernames: [...roster.usernames, uname] });
+      setAuthedUser(uname);
+      setAuthMsg("");
+    } else {
+      if (!pwInput) { setAuthMsg("Set a password to claim this username."); return; }
+      if (roster.locked && !roster.usernames.includes(uname)) { setAuthMsg("Roster is locked — ask the admin to add you first."); return; }
+      await persistPasswords({ ...(passwords || {}), [uname]: entered });
+      if (!roster.usernames.includes(uname)) await persistRoster({ ...roster, usernames: [...roster.usernames, uname] });
+      setAuthedUser(uname);
+      setAuthMsg("Password set — you're in.");
+    }
+  };
+
+  const currentWeek = weeksData[meta.currentWeek];
+  const currentLocked = isWeekLocked(currentWeek);
+  useEffect(() => {
+    const uname = identity.trim();
+    if (uname && roster.teamNames?.[uname] != null) setTeamName(roster.teamNames[uname]);
+    else if (!uname) setTeamName("");
+  }, [identity, roster.teamNames]);
+  const standings = useMemo(() => computeStandings(roster, weeksData, picksData, ledger), [roster, weeksData, picksData, ledger]);
+  const weekPotValue = ENTRY_FEE * (roster.pinnedCount ?? roster.usernames.length) + standings.carryPot;
+  const authed = !!authedUser && identity.trim() !== "" && authedUser === identity.trim();
+  const hasPasswordSet = !!passwords?.[identity.trim()];
+  const viewingSeason = seasons.list.find((s) => s.id === viewingSeasonId) || seasons.list[0];
+  const isArchivedSeason = viewingSeasonId !== seasons.activeSeasonId;
+
+  if (loading || seasonLoading) {
+    return <div style={{ background: "#0A1628", color: "#F5F7FA" }} className="min-h-[400px] flex items-center justify-center font-mono text-sm">loading the book...</div>;
+  }
+
+  return (
+    <div style={{ "--bg": "#0A1628", "--surface": "#122C52", "--gold": "#FB4F14", "--win": "#4C9A6A", "--loss": "#C0524B", "--text": "#F5F7FA", "--muted": "#8CA3C4", "--hairline": "#264876", background: "var(--bg)", color: "var(--text)", fontFamily: "'Inter', sans-serif" }} className="min-h-screen w-full">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap');
+        .display-font { font-family: 'Oswald', sans-serif; letter-spacing: 0.02em; }
+        .mono-font { font-family: 'JetBrains Mono', monospace; }
+        select, input, textarea { color-scheme: dark; }
+      `}</style>
+
+      <div className="max-w-3xl mx-auto px-4 py-6">
+        <header className="flex flex-wrap items-start justify-between gap-3 mb-4 pb-4" style={{ borderBottom: "1px solid var(--hairline)" }}>
+          <div>
+            <h1 className="display-font text-2xl font-bold" style={{ color: "var(--gold)" }}>{viewingSeason?.name}</h1>
+            {seasons.list.length > 1 && (
+              <select value={viewingSeasonId} onChange={(e) => setViewingSeasonId(e.target.value)} className="mt-2 px-2 py-1 rounded text-xs" style={inputStyle()}>
+                {seasons.list.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}{s.id === seasons.activeSeasonId ? " (current)" : " (archived)"}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-2">
+              <div className="text-right">
+                <label className="block text-[10px] uppercase tracking-wider mb-1" style={{ color: "var(--muted)" }}>username</label>
+                <input value={identity} onChange={(e) => persistIdentity(e.target.value)} placeholder="username" className="px-2 py-1 rounded text-sm text-right w-28" style={inputStyle()} />
+              </div>
+              <div className="text-right">
+                <label className="block text-[10px] uppercase tracking-wider mb-1" style={{ color: "var(--muted)" }}>team name</label>
+                <input disabled={!authed} value={teamName} onChange={(e) => persistTeamName(e.target.value)} placeholder={authed ? "team name" : "unlock to edit"} className="px-2 py-1 rounded text-sm text-right w-28" style={inputStyle()} />
+              </div>
+            </div>
+            {identity.trim() && !authed && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="password" value={pwInput} onChange={(e) => setPwInput(e.target.value)}
+                  placeholder={hasPasswordSet ? "password" : "set a password"}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleUnlockOrClaim(); }}
+                  className="px-2 py-1 rounded text-sm w-32" style={inputStyle()}
+                />
+                <button onClick={handleUnlockOrClaim} className="px-2 py-1 rounded text-xs display-font" style={{ background: "var(--gold)", color: "#12161C" }}>
+                  {hasPasswordSet ? "Unlock" : "Claim"}
+                </button>
+              </div>
+            )}
+            {identity.trim() && authed && (
+              <div className="flex items-center gap-2">
+                <Pill tone="win">unlocked</Pill>
+                <button
+                  onClick={() => { setAuthedUser(null); setPwInput(""); setAuthMsg("Logged out."); }}
+                  className="px-2 py-0.5 rounded text-xs display-font" style={{ background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--muted)" }}
+                >
+                  Log out
+                </button>
+              </div>
+            )}
+            {authMsg && <p className="text-[11px]" style={{ color: authMsg.includes("set") || authMsg.includes("in") ? "var(--win)" : "var(--loss)" }}>{authMsg}</p>}
+          </div>
+        </header>
+
+        {isArchivedSeason && (
+          <div className="mb-4 text-xs mono-font px-3 py-2 rounded" style={{ background: "rgba(212,175,55,0.12)", color: "var(--gold)" }}>
+            Viewing archived season — read-only. Switch to "{seasons.list.find((s) => s.id === seasons.activeSeasonId)?.name}" up top to make picks.
+          </div>
+        )}
+
+        <nav className="flex gap-1 mb-6 p-1 rounded-md flex-wrap" style={{ background: "var(--surface)" }}>
+          {[["picks", "Make Picks"], ["leaderboard", "Season Leaderboard"], ["history", "Weekly History"], ["admin", "Admin"]].map(([id, label]) => (
+            <button key={id} onClick={() => { setTab(id); if (id === "history") setHistoryWeek(meta.currentWeek); }} className="tab-btn flex-1 py-2 rounded text-sm font-medium display-font min-w-[80px]" style={tab === id ? { background: "var(--gold)", color: "#12161C" } : { color: "var(--muted)" }}>
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {tab !== "admin" && comments && comments.trim() && (
+          <div className="mb-4 p-3 rounded" style={{ background: "var(--surface)", border: "1px solid var(--gold)", whiteSpace: "pre-wrap" }}>
+            <p className="text-sm" style={{ color: "var(--text)" }}>{comments}</p>
+          </div>
+        )}
+
+        {saveMsg && <div className="mb-4 text-xs mono-font px-3 py-2 rounded" style={{ background: "rgba(76,154,106,0.15)", color: "var(--win)" }}>{saveMsg}</div>}
+
+        {tab === "picks" && (
+          <PicksTab
+            identity={identity} week={currentWeek} weekNum={meta.currentWeek} locked={currentLocked} roster={roster} picksData={picksData} authed={authed} isArchivedSeason={isArchivedSeason} weekPotValue={weekPotValue}
+            onSavePicks={async (picks) => {
+              if (!authed) return;
+              const next = { ...picksData, [meta.currentWeek]: { ...(picksData[meta.currentWeek] || {}), [identity]: picks } };
+              await persistPicks(next);
+              if (!roster.locked && !roster.usernames.includes(identity.trim()) && identity.trim()) {
+                await persistRoster({ ...roster, usernames: [...roster.usernames, identity.trim()] });
+              }
+              flash("Picks saved.");
+            }}
+          />
+        )}
+
+        {tab === "leaderboard" && <LeaderboardTab standings={standings} />}
+
+        {tab === "history" && <HistoryTab weeksData={weeksData} picksData={picksData} roster={roster} historyWeek={historyWeek} setHistoryWeek={setHistoryWeek} standings={standings} identity={identity} authed={authed} />}
+
+        {tab === "admin" && (
+          adminUnlocked ? (
+            <AdminTab
+              meta={meta} roster={roster} weeksData={weeksData} picksData={picksData} ledger={ledger} standings={standings}
+              passwords={passwords} onPasswordsChange={persistPasswords}
+              seasons={seasons} onSeasonsChange={persistSeasons} viewingSeasonId={viewingSeasonId} onSwitchSeason={setViewingSeasonId}
+              onSetAdminPass={persistAdminPass} onSetAdminRecoveryHash={persistAdminRecoveryHash}
+              onSetCurrentWeek={(n) => persistMeta({ ...meta, currentWeek: n })}
+              onRosterChange={persistRoster} onWeeksChange={persistWeeks} onPicksChange={persistPicks} onLedgerChange={persistLedger}
+              comments={comments} onCommentsChange={persistComments} flash={flash}
+            />
+          ) : (
+            <AdminGate adminPass={adminPass} adminRecoveryHash={adminRecoveryHash} onSetPass={persistAdminPass} onSetRecoveryHash={persistAdminRecoveryHash} onUnlock={() => setAdminUnlocked(true)} />
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+function AdminGate({ adminPass, adminRecoveryHash, onSetPass, onSetRecoveryHash, onUnlock }) {
+  const [input, setInput] = useState("");
+  const [confirmInput, setConfirmInput] = useState("");
+  const [err, setErr] = useState("");
+  const [mode, setMode] = useState("unlock"); // "unlock" | "forgot" | "reveal"
+  const [recoveryInput, setRecoveryInput] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [newPwConfirm, setNewPwConfirm] = useState("");
+  const [revealCode, setRevealCode] = useState("");
+  const [copyMsg, setCopyMsg] = useState("");
+
+  const finishSetup = async (password) => {
+    const hash = await sha256Hex(password);
+    const code = generateRecoveryCode();
+    const codeHash = await sha256Hex(code);
+    await onSetPass(hash);
+    await onSetRecoveryHash(codeHash);
+    setRevealCode(code);
+    setMode("reveal");
+  };
+
+  const copyCode = async () => {
+    try { await navigator.clipboard.writeText(revealCode); setCopyMsg("Copied."); }
+    catch { setCopyMsg("Couldn't copy — select and copy the text manually."); }
+  };
+
+  if (mode === "reveal") {
+    return (
+      <TicketCard accent="var(--gold)">
+        <p className="text-sm mb-2 font-medium" style={{ color: "var(--gold)" }}>Save this recovery code somewhere safe</p>
+        <p className="text-xs mb-3" style={{ color: "var(--muted)" }}>This is the only time it will be shown. If you ever forget the admin password, this code is the only way back in — paste it into a password manager, a note, or email it to yourself right now.</p>
+        <div className="text-center py-3 mb-3 rounded mono-font text-lg" style={{ background: "var(--bg)", border: "1px dashed var(--gold)", color: "var(--gold)", letterSpacing: "0.1em" }}>
+          {revealCode}
+        </div>
+        <button onClick={copyCode} className="w-full py-2 rounded display-font text-sm mb-2" style={{ background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--text)" }}>Copy to clipboard</button>
+        {copyMsg && <p className="text-xs mb-2" style={{ color: "var(--gold)" }}>{copyMsg}</p>}
+        <button onClick={onUnlock} className="w-full py-2 rounded display-font text-sm" style={{ background: "var(--gold)", color: "#12161C" }}>I've saved it — Continue</button>
+      </TicketCard>
+    );
+  }
+
+  if (adminPass == null) {
+    return (
+      <TicketCard accent="var(--gold)">
+        <p className="text-sm mb-3">No admin password has been set yet. Set one and share it with whoever should have admin access.</p>
+        <input type="password" value={input} onChange={(e) => setInput(e.target.value)} placeholder="new admin password" className="w-full px-2 py-1.5 rounded text-sm mb-2" style={inputStyle()} />
+        <input type="password" value={confirmInput} onChange={(e) => setConfirmInput(e.target.value)} placeholder="confirm password" className="w-full px-2 py-1.5 rounded text-sm mb-2" style={inputStyle()} />
+        <button
+          onClick={async () => {
+            if (!input || input !== confirmInput) { setErr("Passwords don't match."); return; }
+            setErr("");
+            await finishSetup(input);
+          }}
+          className="w-full py-2 rounded display-font text-sm" style={{ background: "var(--gold)", color: "#12161C" }}
+        >
+          Set Admin Password
+        </button>
+        {err && <p className="text-xs mt-2" style={{ color: "var(--loss)" }}>{err}</p>}
+        <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>This is a simple shared gate for a casual league, not real account security — anyone with the password gets admin access. Passwords are hashed before being stored, not kept as plain text.</p>
+      </TicketCard>
+    );
+  }
+
+  if (mode === "forgot") {
+    return (
+      <TicketCard accent="var(--gold)">
+        <p className="text-sm mb-3">Enter your recovery code to set a new admin password.</p>
+        <input value={recoveryInput} onChange={(e) => setRecoveryInput(e.target.value.toUpperCase())} placeholder="XXXX-XXXX-XXXX" className="w-full px-2 py-1.5 rounded text-sm mb-2 mono-font" style={inputStyle()} />
+        <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="new admin password" className="w-full px-2 py-1.5 rounded text-sm mb-2" style={inputStyle()} />
+        <input type="password" value={newPwConfirm} onChange={(e) => setNewPwConfirm(e.target.value)} placeholder="confirm new password" className="w-full px-2 py-1.5 rounded text-sm mb-2" style={inputStyle()} />
+        <button
+          onClick={async () => {
+            if (!recoveryInput.trim()) { setErr("Enter your recovery code."); return; }
+            if (!newPw || newPw !== newPwConfirm) { setErr("Passwords don't match."); return; }
+            const enteredHash = await sha256Hex(recoveryInput.trim());
+            if (enteredHash !== adminRecoveryHash) { setErr("That recovery code doesn't match."); return; }
+            setErr("");
+            await finishSetup(newPw);
+          }}
+          className="w-full py-2 rounded display-font text-sm mb-2" style={{ background: "var(--gold)", color: "#12161C" }}
+        >
+          Reset Password
+        </button>
+        <button onClick={() => { setMode("unlock"); setErr(""); }} className="w-full py-2 rounded display-font text-sm" style={{ background: "var(--surface)", color: "var(--muted)" }}>Back</button>
+        {err && <p className="text-xs mt-2" style={{ color: "var(--loss)" }}>{err}</p>}
+        <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>Resetting generates a brand new recovery code — the old one stops working.</p>
+      </TicketCard>
+    );
+  }
+
+  return (
+    <TicketCard accent="var(--gold)">
+      <p className="text-sm mb-3">Enter the admin password to manage the league.</p>
+      <input type="password" value={input} onChange={(e) => setInput(e.target.value)} placeholder="admin password" className="w-full px-2 py-1.5 rounded text-sm mb-2" style={inputStyle()} />
+      <button
+        onClick={async () => {
+          const enteredHash = await sha256Hex(input);
+          if (enteredHash === adminPass) { onUnlock(); return; }
+          if (input === adminPass) {
+            // Legacy plain-text password from before hashing was added — migrate it transparently.
+            await finishSetup(input);
+            return;
+          }
+          setErr("Wrong password.");
+        }}
+        className="w-full py-2 rounded display-font text-sm mb-2" style={{ background: "var(--gold)", color: "#12161C" }}
+      >
+        Unlock Admin
+      </button>
+      <button onClick={() => { setMode("forgot"); setErr(""); }} className="w-full text-xs" style={{ color: "var(--muted)" }}>Forgot password?</button>
+      {err && <p className="text-xs mt-2" style={{ color: "var(--loss)" }}>{err}</p>}
+    </TicketCard>
+  );
+}
+
+function PicksTab({ identity, week, weekNum, locked, roster, picksData, authed, isArchivedSeason, weekPotValue, onSavePicks }) {
+  const existing = (picksData[weekNum] && picksData[weekNum][identity]) || [];
+  const [slots, setSlots] = useState(Array.from({ length: PICKS_PER_WEEK }, (_, i) => existing[i] || { id: newId(), gameId: "", type: "spread", selection: "" }));
+  const [confirmData, setConfirmData] = useState(null);
+
+  useEffect(() => {
+    const ex = (picksData[weekNum] && picksData[weekNum][identity]) || [];
+    setSlots(Array.from({ length: PICKS_PER_WEEK }, (_, i) => ex[i] || { id: newId(), gameId: "", type: "spread", selection: "" }));
+  }, [weekNum, identity]);
+
+  if (isArchivedSeason) return <EmptyState text="This is an archived season — picks are read-only. Switch to the current season up top to make picks." />;
+  if (!week || !week.games || week.games.length === 0) return <EmptyState text="No games have been set for this week yet. Check back once the admin publishes the odds." />;
+  if (!identity.trim()) return <EmptyState text="Enter your username up top to make picks." />;
+  if (roster.locked && !roster.usernames.includes(identity.trim())) return <EmptyState text="Roster is locked and this username isn't on it. Ask the admin to add you." />;
+  if (!authed) return <EmptyState text="Enter your password up top (or set one if this is your first time) to make picks." />;
+
+  const update = (idx, field, value) => {
+    setSlots((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      if (field === "gameId" || field === "type") next[idx].selection = "";
+      if (field === "gameId") {
+        const otherSlots = prev.filter((_, i) => i !== idx);
+        const usedCombos = new Set(otherSlots.filter((s) => s.gameId && s.type).map((s) => `${s.gameId}:${s.type}`));
+        if (usedCombos.has(`${value}:${next[idx].type}`)) {
+          next[idx].type = usedCombos.has(`${value}:spread`) ? "total" : "spread";
+        }
+      }
+      return next;
+    });
+  };
+
+  const completeSlots = slots.filter((s) => s.gameId && s.type && s.selection);
+  const lockedCompleteSlots = completeSlots.filter((s) => {
+    const g = week.games.find((x) => x.id === s.gameId);
+    return !g || isGameLocked(g);
+  });
+  const savableSlots = completeSlots.filter((s) => !lockedCompleteSlots.includes(s));
+  const canSave = !locked && savableSlots.length > 0;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs" style={{ color: "var(--muted)" }}>Fill in as few or as many of the 5 slots as you like and submit — you don't need all 5 at once. Anything left blank at the deadline scores as a loss.</p>
+
+      <p className="text-center text-2xl display-font" style={{ color: "var(--gold)" }}>Week {weekNum} of {MAX_WEEKS} — ${Math.round(weekPotValue)}</p>
+      <div className="flex items-center justify-center gap-2 text-xs mono-font" style={{ color: "var(--muted)" }}>
+        <span>{locked ? "PICKS LOCKED FOR THE WEEK" : `open until ${week.deadline ? new Date(week.deadline).toLocaleString(undefined, { weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—"}`}</span>
+        <Pill tone={locked ? "loss" : "win"}>{locked ? "closed" : "open"}</Pill>
+      </div>
+
+      {slots.map((slot, idx) => {
+        const game = week.games.find((g) => g.id === slot.gameId);
+        const otherSlots = slots.filter((_, i) => i !== idx);
+        const usedCombos = new Set(otherSlots.filter((s) => s.gameId && s.type).map((s) => `${s.gameId}:${s.type}`));
+        const options = game ? BET_OPTIONS(game)[slot.type] : [];
+        const slotLocked = locked || (game && isGameLocked(game));
+        const gameFullyClaimed = (g) => usedCombos.has(`${g.id}:spread`) && usedCombos.has(`${g.id}:total`);
+        const optionGames = sortByKickoff(week.games.filter((g) => !gameFullyClaimed(g) || g.id === slot.gameId));
+        return (
+          <TicketCard key={slot.id} accent="var(--gold)">
+            <div className="flex items-center justify-between mb-2">
+              <span className="mono-font text-xs" style={{ color: "var(--gold)" }}>PICK {idx + 1}</span>
+              {slotLocked && game && isGameLocked(game) && <Pill tone="loss">game started</Pill>}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <select disabled={slotLocked} value={slot.gameId} onChange={(e) => update(idx, "gameId", e.target.value)} className="px-2 py-2 rounded text-sm" style={inputStyle()}>
+                <option value="">Select game…</option>
+                {optionGames.map((g) => (
+                  <option key={g.id} value={g.id} disabled={isGameLocked(g) && g.id !== slot.gameId}>
+                    {g.label} — {fmtKickoff(g.kickoff)}{isGameLocked(g) ? " (started)" : ""}
+                  </option>
+                ))}
+              </select>
+              <select disabled={slotLocked || !slot.gameId} value={slot.type} onChange={(e) => update(idx, "type", e.target.value)} className="px-2 py-2 rounded text-sm" style={inputStyle()}>
+                <option value="spread" disabled={usedCombos.has(`${slot.gameId}:spread`)}>Spread{usedCombos.has(`${slot.gameId}:spread`) ? " (already picked)" : ""}</option>
+                <option value="total" disabled={usedCombos.has(`${slot.gameId}:total`)}>Over/Under{usedCombos.has(`${slot.gameId}:total`) ? " (already picked)" : ""}</option>
+              </select>
+            </div>
+            <select disabled={slotLocked || !game} value={slot.selection} onChange={(e) => update(idx, "selection", e.target.value)} className="w-full px-2 py-2 rounded text-sm" style={inputStyle()}>
+              <option value="">Select pick…</option>
+              {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </TicketCard>
+        );
+      })}
+
+      {!locked && (
+        <button
+          disabled={!canSave}
+          onClick={async () => {
+            if (isWeekLocked(week)) {
+              setConfirmData(null);
+              alert("The deadline just passed — picks are now locked for this week.");
+              return;
+            }
+            const isAlreadySaved = (s) => existing.some((e) => e.gameId === s.gameId && e.type === s.type && e.selection === s.selection);
+            const freshlyLocked = completeSlots.filter((s) => {
+              const g = week.games.find((x) => x.id === s.gameId);
+              return g && isGameLocked(g) && !isAlreadySaved(s);
+            });
+            if (freshlyLocked.length > 0) {
+              setConfirmData(null);
+              alert("One of your picks is on a game that just started. Please review your picks and save again.");
+              return;
+            }
+            await onSavePicks(completeSlots);
+            const summary = slots.map((s, i) => {
+              if (!s.gameId || !s.type || !s.selection) return { num: i + 1, filled: false };
+              const g = week.games.find((x) => x.id === s.gameId);
+              const opt = g ? BET_OPTIONS(g)[s.type].find((o) => o.value === s.selection) : null;
+              return { num: i + 1, filled: true, text: `${g?.label || "?"} — ${opt?.label || s.selection}` };
+            });
+            setConfirmData(summary);
+          }}
+          className="w-full py-3 rounded-md display-font font-semibold text-sm" style={canSave || completeSlots.length === 0 ? { background: "var(--gold)", color: "#12161C" } : { background: "var(--surface)", color: "var(--muted)" }}
+        >
+          {canSave
+            ? `Submit ${completeSlots.length} Pick${completeSlots.length === 1 ? "" : "s"}`
+            : completeSlots.length === 0
+            ? "Fill in at least one pick to submit"
+            : "That game has already started — pick a different game"}
+        </button>
+      )}
+
+      {confirmData != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setConfirmData(null)}>
+          <div className="rounded-lg p-6" style={{ background: "var(--surface)", border: "2px solid var(--gold)", minWidth: 260, maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+            <div className="text-center mb-3">
+              <div className="text-3xl mb-1" style={{ color: "var(--win)" }}>✓</div>
+              <p className="display-font text-lg" style={{ color: "var(--gold)" }}>Picks Submitted</p>
+            </div>
+            <div className="space-y-1.5 mb-3">
+              {confirmData.map((s) => (
+                <div key={s.num} className="text-xs mono-font flex gap-2">
+                  <span style={{ color: "var(--gold)" }}>Pick {s.num}:</span>
+                  {s.filled ? <span style={{ color: "var(--text)" }}>{s.text}</span> : <span style={{ color: "var(--muted)" }}>not yet picked</span>}
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-center mb-3" style={{ color: "var(--muted)" }}>
+              {confirmData.filter((s) => !s.filled).length === 0
+                ? "All 5 picks are in."
+                : `${confirmData.filter((s) => !s.filled).length} of 5 still open — deadline is ${fmtMountainTime(week.deadline)}.`}
+            </p>
+            <button onClick={() => setConfirmData(null)} className="w-full py-2 rounded-md display-font font-semibold text-sm" style={{ background: "var(--gold)", color: "#12161C" }}>
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeaderboardTab({ standings }) {
+  const [sortKey, setSortKey] = useState("wins");
+  const [dir, setDir] = useState(-1);
+
+  const rows = [...standings.rows].sort((a, b) => {
+    if (sortKey === "pct") {
+      const ap = a.wins + a.losses ? a.wins / (a.wins + a.losses) : 0;
+      const bp = b.wins + b.losses ? b.wins / (b.wins + b.losses) : 0;
+      return (ap - bp) * dir;
+    }
+    return (a[sortKey] - b[sortKey]) * dir;
+  });
+
+  const cols = [["teamName", "Team"], ["wins", "W"], ["losses", "L"], ["pct", "Win %"], ["totalWon", "Earnings"]];
+  const setSort = (k) => { if (k === sortKey) setDir((d) => -d); else { setSortKey(k); setDir(-1); } };
+
+  if (rows.length === 0) return <EmptyState text="No one's on the roster yet." />;
+
+  return (
+    <div>
+      {standings.carryPot > 0 && (
+        <div className="mb-3 text-xs mono-font px-2 py-2 rounded" style={{ background: "rgba(212,175,55,0.12)", color: "var(--gold)" }}>
+          Carryover pot: ${standings.carryPot.toFixed(2)} rolling into next scored week
+        </div>
+      )}
+      {standings.oferPotTotal > 0 && (
+        <div className="mb-3 text-xs mono-font px-2 py-2 rounded" style={{ background: "rgba(192,82,75,0.12)", color: "var(--loss)" }}>
+          O-fer pot: ${standings.oferPotTotal.toFixed(2)} accumulated — separate from the weekly pot, settled separately
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-md" style={{ border: "1px solid var(--hairline)" }}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr style={{ background: "var(--surface)" }}>
+              {cols.map(([k, label]) => (
+                <th key={k} onClick={() => setSort(k)} className="px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide" style={{ color: sortKey === k ? "var(--gold)" : "var(--muted)" }}>
+                  {label} {sortKey === k ? (dir === 1 ? "↑" : "↓") : ""}
+                </th>
+              ))}
+              <th onClick={() => setSort("oferOwed")} className="px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide" style={{ color: sortKey === "oferOwed" ? "var(--gold)" : "var(--muted)" }}>
+                O-fer {sortKey === "oferOwed" ? (dir === 1 ? "↑" : "↓") : ""}
+              </th>
+              <th className="px-2 py-2 text-left display-font text-xs uppercase tracking-wide" style={{ color: "var(--muted)" }}>Wks Won</th>
+            </tr>
+          </thead>
+          <tbody className="mono-font">
+            {rows.map((r, i) => {
+              const pct = r.wins + r.losses ? Math.round((r.wins / (r.wins + r.losses)) * 100) : 0;
+              return (
+                <tr key={r.username} style={{ borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" }}>
+                  <td className="px-2 py-2 font-sans font-medium">{r.teamName}</td>
+                  <td className="px-2 py-2" style={{ color: "var(--win)" }}>{r.wins}</td>
+                  <td className="px-2 py-2" style={{ color: "var(--loss)" }}>{r.losses}</td>
+                  <td className="px-2 py-2">{pct}%</td>
+                  <td className="px-2 py-2" style={{ color: r.totalWon > 0 ? "var(--gold)" : "var(--text)" }}>${r.totalWon.toFixed(2)}</td>
+                  <td className="px-2 py-2" style={{ color: r.oferOwed > 0 ? "var(--loss)" : "var(--text)" }}>${r.oferOwed.toFixed(2)}</td>
+                  <td className="px-2 py-2" style={{ color: "var(--gold)" }}>{r.wonWeeks.length > 0 ? r.wonWeeks.map((w) => `Wk ${w}`).join(", ") : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function HistoryTab({ weeksData, picksData, roster, historyWeek, setHistoryWeek, standings, identity, authed }) {
+  const weekNums = Object.keys(weeksData).map(Number).sort((a, b) => a - b);
+  const effectiveWeek = weekNums.includes(historyWeek) ? historyWeek : weekNums[weekNums.length - 1];
+  const week = weeksData[effectiveWeek];
+  const weekLocked = isWeekLocked(week);
+  const leagueStat = standings.weeklyLeagueStats[effectiveWeek];
+
+  if (weekNums.length === 0) return <EmptyState text="No weeks have been created yet." />;
+
+  return (
+    <div>
+      <div className="mb-4 text-center">
+        <select
+          value={effectiveWeek}
+          onChange={(e) => setHistoryWeek(Number(e.target.value))}
+          className="text-center text-2xl display-font px-3 py-1 rounded"
+          style={{ color: "var(--gold)", background: "var(--bg)", border: "1px solid var(--gold)" }}
+        >
+          {weekNums.map((wn) => <option key={wn} value={wn}>Week {wn}</option>)}
+        </select>
+      </div>
+
+      {leagueStat && (
+        <div className="mb-4 text-xs mono-font px-3 py-2 rounded" style={{ background: "rgba(212,175,55,0.1)", color: "var(--gold)" }}>
+          League week accuracy: {leagueStat.correct}/{leagueStat.total} ({leagueStat.pct.toFixed(1)}%)
+        </div>
+      )}
+
+      {!weekLocked && (
+        <p className="text-[11px] mb-3" style={{ color: "var(--muted)" }}>Other players' picks reveal one at a time — as soon as a game starts, everyone's pick on that game becomes visible. Anything not yet revealed shows all at once at the deadline. You can always see your own picks below.</p>
+      )}
+
+      <div className="space-y-4">
+        {roster.usernames.map((u) => {
+          const isOwnRow = !!authed && identity.trim() === u;
+          const userPicks = (picksData[effectiveWeek] && picksData[effectiveWeek][u]) || [];
+          return (
+            <TicketCard key={u}>
+              <div className="mb-2 font-medium display-font">
+                {roster.teamNames?.[u] || u} <span className="text-xs mono-font" style={{ color: "var(--muted)" }}>({u})</span>
+                {isOwnRow && <span className="ml-2"><Pill tone="win">you</Pill></span>}
+              </div>
+              {userPicks.length === 0 && weekLocked ? (
+                <div className="text-xs mono-font" style={{ color: "var(--loss)" }}>No picks submitted — counted as 5 losses.</div>
+              ) : (
+                <table className="w-full text-xs mono-font">
+                  <tbody>
+                    {userPicks.map((p) => {
+                      const game = week.games.find((g) => g.id === p.gameId);
+                      if (!game) return null;
+                      if (!isOwnRow && !isPickRevealed(game, week)) {
+                        return (
+                          <tr key={p.id} style={{ borderTop: "1px solid var(--hairline)" }}>
+                            <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>{game.label}</td>
+                            <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>not revealed yet</td>
+                            <td className="py-1.5"><Pill tone="pending">hidden</Pill></td>
+                          </tr>
+                        );
+                      }
+                      const opt = BET_OPTIONS(game)[p.type].find((o) => o.value === p.selection);
+                      const outcome = scorePick(p, game);
+                      return (
+                        <tr key={p.id} style={{ borderTop: "1px solid var(--hairline)" }}>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>{game.label}</td>
+                          <td className="py-1.5 pr-2">{opt?.label}</td>
+                          <td className="py-1.5"><Pill tone={outcome}>{outcome}</Pill></td>
+                        </tr>
+                      );
+                    })}
+                    {Array.from({ length: Math.max(0, PICKS_PER_WEEK - userPicks.length) }).map((_, i) =>
+                      weekLocked ? (
+                        <tr key={`miss-${i}`} style={{ borderTop: "1px solid var(--hairline)" }}>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>—</td>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>no pick</td>
+                          <td className="py-1.5"><Pill tone="loss">loss</Pill></td>
+                        </tr>
+                      ) : isOwnRow ? (
+                        <tr key={`miss-${i}`} style={{ borderTop: "1px solid var(--hairline)" }}>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>—</td>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>not yet picked</td>
+                          <td className="py-1.5"><Pill tone="pending">open</Pill></td>
+                        </tr>
+                      ) : (
+                        <tr key={`miss-${i}`} style={{ borderTop: "1px solid var(--hairline)" }}>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>—</td>
+                          <td className="py-1.5 pr-2" style={{ color: "var(--muted)" }}>not revealed yet</td>
+                          <td className="py-1.5"><Pill tone="pending">hidden</Pill></td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </TicketCard>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passwords, onPasswordsChange, seasons, onSeasonsChange, viewingSeasonId, onSwitchSeason, onSetAdminPass, onSetAdminRecoveryHash, onSetCurrentWeek, onRosterChange, onWeeksChange, onPicksChange, onLedgerChange, comments, onCommentsChange, flash }) {
+  const [newUser, setNewUser] = useState("");
+  const [commentsDraft, setCommentsDraft] = useState(comments);
+  useEffect(() => { setCommentsDraft(comments); }, [comments]);
+  const [commentsMsg, setCommentsMsg] = useState("");
+  const [gameForm, setGameForm] = useState({ teamA: "", teamB: "", spreadA: "", total: "", kickoff: "" });
+  const [oddsApiKey, setOddsApiKey] = useState("");
+  const [pastePayload, setPastePayload] = useState("");
+  const [fetchMsg, setFetchMsg] = useState("");
+  const [adjForm, setAdjForm] = useState({ username: "", field: "paid", amount: "", note: "" });
+  const [exportPreview, setExportPreview] = useState(null);
+  const [pwFormUser, setPwFormUser] = useState("");
+  const [pwFormValue, setPwFormValue] = useState("");
+  const [pwFormMsg, setPwFormMsg] = useState("");
+  const [newSeasonName, setNewSeasonName] = useState("");
+  const [seasonMsg, setSeasonMsg] = useState("");
+  const [confirmDeleteSeasonId, setConfirmDeleteSeasonId] = useState(null);
+
+  const resetPassword = async (u) => {
+    const next = { ...passwords };
+    delete next[u];
+    await onPasswordsChange(next);
+    flash(`${u}'s password cleared — they'll set a new one next time they enter it.`);
+  };
+  const setPasswordDirect = async () => {
+    if (!pwFormUser || !pwFormValue) { setPwFormMsg("Pick a player and enter a password."); return; }
+    const hash = await sha256Hex(pwFormValue);
+    await onPasswordsChange({ ...(passwords || {}), [pwFormUser]: hash });
+    setPwFormMsg(`Password set for ${pwFormUser}. Share it with them directly.`);
+    setPwFormValue("");
+  };
+  const startNewSeason = async () => {
+    const name = newSeasonName.trim();
+    if (!name) { setSeasonMsg("Give the new season a name."); return; }
+    const id = `season-${Date.now()}`;
+    const nextList = [...seasons.list, { id, name, createdAt: new Date().toISOString() }];
+    await onSeasonsChange({ list: nextList, activeSeasonId: id });
+    setNewSeasonName("");
+    setSeasonMsg(`${name} started — this is now the active season everyone picks in.`);
+    onSwitchSeason(id);
+  };
+  const deleteSeason = async (id) => {
+    if (seasons.list.length <= 1) { setSeasonMsg("You need at least one season — can't delete the only one."); return; }
+    if (confirmDeleteSeasonId !== id) { setConfirmDeleteSeasonId(id); return; }
+    const target = seasons.list.find((s) => s.id === id);
+    const nextList = seasons.list.filter((s) => s.id !== id);
+    const nextActive = seasons.activeSeasonId === id ? nextList[0].id : seasons.activeSeasonId;
+    await onSeasonsChange({ list: nextList, activeSeasonId: nextActive });
+    const keys = seasonKeys(id);
+    await Promise.all([
+      saveJSON(keys.meta, { currentWeek: 1 }),
+      saveJSON(keys.roster, { usernames: [], teamNames: {}, locked: false, pinnedCount: null }),
+      saveJSON(keys.weeks, {}),
+      saveJSON(keys.picks, {}),
+      saveJSON(keys.ledger, { adjustments: [] }),
+    ]);
+    if (viewingSeasonId === id) onSwitchSeason(nextActive);
+    setConfirmDeleteSeasonId(null);
+    setSeasonMsg(`"${target.name}" deleted.`);
+  };
+
+  const weekNums = Object.keys(weeksData).map(Number).sort((a, b) => a - b);
+  const seasonName = seasons.list.find((s) => s.id === viewingSeasonId)?.name || "Season";
+  const editWeek = weeksData[meta.currentWeek] || { games: [], deadline: "", locked: false };
+  const saveWeek = (patch) => onWeeksChange({ ...weeksData, [meta.currentWeek]: { ...editWeek, ...patch } });
+
+  const addGame = () => {
+    if (!gameForm.teamA || !gameForm.teamB) return;
+    const g = { id: newId(), teamA: gameForm.teamA, teamB: gameForm.teamB, spreadA: gameForm.spreadA, total: gameForm.total, kickoff: gameForm.kickoff ? new Date(gameForm.kickoff).toISOString() : "", label: `${gameForm.teamA} @ ${gameForm.teamB}`, finalScoreA: null, finalScoreB: null };
+    const allGames = [...(editWeek.games || []), g];
+    const patch = { games: allGames };
+    if (!editWeek.deadline) {
+      const derived = deadlineFromGames(allGames);
+      if (derived) patch.deadline = derived;
+    }
+    saveWeek(patch);
+    setGameForm({ teamA: "", teamB: "", spreadA: "", total: "", kickoff: "" });
+    flash("Game added.");
+  };
+  const removeGame = (id) => saveWeek({ games: editWeek.games.filter((g) => g.id !== id) });
+  const updateGame = (id, patch) => saveWeek({ games: editWeek.games.map((g) => (g.id === id ? { ...g, ...patch } : g)) });
+  const [confirmClearGames, setConfirmClearGames] = useState(false);
+  useEffect(() => { setConfirmClearGames(false); }, [meta.currentWeek]);
+  const clearAllGames = () => {
+    if (!confirmClearGames) { setConfirmClearGames(true); return; }
+    saveWeek({ games: [], deadline: "" });
+    setConfirmClearGames(false);
+    flash(`All games cleared for Week ${meta.currentWeek} — deadline reset too, so it'll re-derive correctly from your next import.`);
+  };
+
+  const [importFrom, setImportFrom] = useState("");
+  const [importTo, setImportTo] = useState("");
+  const [importConfirmed, setImportConfirmed] = useState(false);
+  useEffect(() => { setImportConfirmed(false); }, [meta.currentWeek]);
+
+  const importOddsFromEvents = (events) => {
+    if (!importFrom || !importTo) { setFetchMsg("Set both dates in the range before importing."); return; }
+    const fromMs = new Date(importFrom).getTime();
+    const toMs = new Date(importTo).getTime();
+    const filtered = events.filter((ev) => {
+      const t = new Date(ev.commence_time).getTime();
+      return t >= fromMs && t <= toMs;
+    });
+    const games = filtered.map((ev) => {
+      const bk = ev.bookmakers?.[0];
+      const spreadsMkt = bk?.markets?.find((m) => m.key === "spreads");
+      const totalsMkt = bk?.markets?.find((m) => m.key === "totals");
+      const away = ev.away_team, home = ev.home_team;
+      const spreadOutcome = spreadsMkt?.outcomes?.find((o) => o.name === away);
+      const totalOutcome = totalsMkt?.outcomes?.[0];
+      return {
+        id: newId(), oddsApiEventId: ev.id, teamA: away, teamB: home,
+        spreadA: spreadOutcome?.point ?? "", total: totalOutcome?.point ?? "",
+        kickoff: ev.commence_time || "", label: `${away} @ ${home}`, finalScoreA: null, finalScoreB: null,
+      };
+    });
+    const allGames = [...(editWeek.games || []), ...games];
+    const patch = { games: allGames };
+    if (!editWeek.deadline) {
+      const derived = deadlineFromGames(allGames);
+      if (derived) patch.deadline = derived;
+    }
+    saveWeek(patch);
+    const skipped = events.length - filtered.length;
+    const deadlineNote = patch.deadline ? ` Deadline auto-set to Sun 10am MT of that week.` : "";
+    setFetchMsg(`Imported ${games.length} games${skipped > 0 ? ` (${skipped} outside the date range were skipped)` : ""}.${deadlineNote}`);
+  };
+
+  const fetchOddsLive = async () => {
+    setFetchMsg("Fetching…");
+    try {
+      const res = await fetch(`https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds?apiKey=${encodeURIComponent(oddsApiKey)}&regions=us&markets=spreads,totals&oddsFormat=american`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const events = await res.json();
+      importOddsFromEvents(events);
+    } catch (e) {
+      setFetchMsg(`Live fetch failed (${e.message}). Paste the API response JSON below instead.`);
+    }
+  };
+  const importPastedOdds = () => {
+    try {
+      importOddsFromEvents(JSON.parse(pastePayload));
+      setPastePayload("");
+    } catch (e) {
+      setFetchMsg(`Couldn't parse that JSON: ${e.message}`);
+    }
+  };
+
+  const applyScores = (scoresPayload) => {
+    let games = editWeek.games || [];
+    scoresPayload.forEach((sc) => {
+      if (!sc.completed || !sc.scores) return;
+      const idx = games.findIndex((g) => g.oddsApiEventId === sc.id || (g.teamA === sc.away_team && g.teamB === sc.home_team));
+      if (idx === -1) return;
+      const scoreA = sc.scores.find((s) => s.name === sc.away_team)?.score;
+      const scoreB = sc.scores.find((s) => s.name === sc.home_team)?.score;
+      games = games.map((g, i) => (i === idx ? { ...g, finalScoreA: scoreA ?? g.finalScoreA, finalScoreB: scoreB ?? g.finalScoreB } : g));
+    });
+    saveWeek({ games });
+    setFetchMsg("Scores applied.");
+  };
+  const fetchScoresLive = async () => {
+    setFetchMsg("Fetching…");
+    try {
+      const res = await fetch(`https://api.the-odds-api.com/v4/sports/americanfootball_nfl/scores?apiKey=${encodeURIComponent(oddsApiKey)}&daysFrom=3`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      applyScores(await res.json());
+    } catch (e) {
+      setFetchMsg(`Live fetch failed (${e.message}). Paste the API response JSON below instead.`);
+    }
+  };
+  const importPastedScores = () => {
+    try { applyScores(JSON.parse(pastePayload)); setPastePayload(""); }
+    catch (e) { setFetchMsg(`Couldn't parse that JSON: ${e.message}`); }
+  };
+
+  const lockRosterAndPin = () => onRosterChange({ ...roster, locked: true, pinnedCount: roster.usernames.length });
+
+  const buildWeekPicksRows = () => {
+    const week = weeksData[meta.currentWeek];
+    if (!week) return null;
+    const headers = ["Team", "Game", "Bet Type", "Selection", "Outcome"];
+    const rows = [];
+    roster.usernames.forEach((u) => {
+      const picks = (picksData[meta.currentWeek] && picksData[meta.currentWeek][u]) || [];
+      if (picks.length === 0) {
+        rows.push([roster.teamNames?.[u] || u, "", "", "no pick", "loss"]);
+      } else {
+        picks.slice(0, PICKS_PER_WEEK).forEach((p) => {
+          const game = week.games.find((g) => g.id === p.gameId);
+          if (!game) return;
+          const opt = BET_OPTIONS(game)[p.type].find((o) => o.value === p.selection);
+          const outcome = scorePick(p, game);
+          rows.push([roster.teamNames?.[u] || u, game.label, p.type === "spread" ? "Spread" : "Over/Under", opt?.label || p.selection, outcome]);
+        });
+      }
+      for (let i = picks.length; i < PICKS_PER_WEEK; i++) {
+        rows.push([roster.teamNames?.[u] || u, "", "", "no pick", "loss"]);
+      }
+      rows.push(["", "", "", "", ""]);
+    });
+    return { headers, rows };
+  };
+
+  const exportWeekXlsx = () => {
+    const built = buildWeekPicksRows();
+    if (!built) return;
+    const filename = `${seasonName}-week${meta.currentWeek}-picks.xlsx`;
+    const outcomeCol = built.headers.indexOf("Outcome");
+    const styleForCell = (rowIdx, colIdx, val) => {
+      if (colIdx !== outcomeCol) return 0;
+      if (val === "win") return 2; // green fill
+      if (val === "loss") return 3; // red fill
+      return 0;
+    };
+    const ok = tryDownloadXlsx(filename, built.headers, built.rows, styleForCell);
+    setExportPreview({ filename, csv: null, note: "Excel file — wins are shaded green, losses red. If the download didn't drop, try the button again; this file type can't be pasted as text." });
+    flash(ok ? "Colored Excel file downloaded." : "Download was blocked — try clicking the button again.");
+  };
+
+  const exportSeasonXlsx = () => {
+    const headers = ["Username", "Team", "Wins", "Losses", "Win %", "Owed", "Earnings", "O-fer", "Balance", "Weeks Won"];
+    const rows = standings.rows.map((r) => {
+      const pctFraction = r.wins + r.losses ? r.wins / (r.wins + r.losses) : 0;
+      const balance = r.totalWon - r.totalPaid - r.oferOwed;
+      return [
+        r.username, r.teamName, r.wins, r.losses, pctFraction,
+        r.totalPaid, r.totalWon, r.oferOwed, balance,
+        r.wonWeeks.map((w) => `Wk ${w}`).join(" / "),
+      ];
+    });
+
+    const totalWins = standings.rows.reduce((a, r) => a + r.wins, 0);
+    const totalLosses = standings.rows.reduce((a, r) => a + r.losses, 0);
+    const totalOwed = standings.rows.reduce((a, r) => a + r.totalPaid, 0);
+    const totalEarnings = standings.rows.reduce((a, r) => a + r.totalWon, 0);
+    const totalOfer = standings.rows.reduce((a, r) => a + r.oferOwed, 0);
+    const totalBalance = totalEarnings - totalOwed - totalOfer;
+    const cumulativePct = totalWins + totalLosses ? totalWins / (totalWins + totalLosses) : 0;
+    rows.push(["TOTAL", "", totalWins, totalLosses, cumulativePct, totalOwed, totalEarnings, totalOfer, totalBalance, ""]);
+    const totalsRowIdx = rows.length - 1;
+
+    const pctCol = headers.indexOf("Win %");
+    const owedCol = headers.indexOf("Owed");
+    const earningsCol = headers.indexOf("Earnings");
+    const oferCol = headers.indexOf("O-fer");
+    const balanceCol = headers.indexOf("Balance");
+    const styleForCell = (rowIdx, colIdx, val) => {
+      const isTotals = rowIdx === totalsRowIdx;
+      if (colIdx === pctCol) return isTotals ? 9 : 7; // percent format, bold on totals row
+      if (colIdx === owedCol) return isTotals ? 8 : val > 0 ? 6 : 4; // money, red if owed
+      if (colIdx === earningsCol) return isTotals ? 8 : val > 0 ? 5 : 4; // money, green if earned
+      if (colIdx === oferCol) return isTotals ? 8 : val > 0 ? 6 : 4; // money, red if owed
+      if (colIdx === balanceCol) return isTotals ? 8 : val > 0 ? 5 : val < 0 ? 6 : 4; // money, net position
+      return isTotals ? 1 : 0; // bold on totals row (Username/Wins/Losses/etc.)
+    };
+    const filename = `${seasonName}-season-to-date.xlsx`;
+    const ok = tryDownloadXlsx(filename, headers, rows, styleForCell);
+    setExportPreview({ filename, csv: null, note: "Excel file — money owed is shaded red, earnings and a positive balance are shaded green. This file type can't be pasted as text; try the download button again if it didn't drop." });
+    flash(ok ? "Colored Excel file downloaded." : "Download was blocked — try clicking the button again.");
+  };
+
+  const addAdjustment = () => {
+    if (!adjForm.username || !adjForm.amount) return;
+    const adj = { id: newId(), ...adjForm, amount: Number(adjForm.amount) };
+    onLedgerChange({ adjustments: [...(ledger.adjustments || []), adj] });
+    setAdjForm({ username: "", field: "paid", amount: "", note: "" });
+  };
+  const removeAdjustment = (id) => onLedgerChange({ adjustments: (ledger.adjustments || []).filter((a) => a.id !== id) });
+
+  const seedTestData = () => {
+    const now = Date.now();
+    const pastKickoff = new Date(now - 15 * 60000).toISOString(); // already started -> tests per-game lock
+    const futureKickoff1 = new Date(now + 60 * 60000).toISOString();
+    const futureKickoff2 = new Date(now + 90 * 60000).toISOString();
+    const deadline = new Date(now + 3 * 60000).toISOString(); // locks the whole week 3 min from now
+
+    const g1 = { id: newId(), teamA: "Ravens", teamB: "Bengals", spreadA: -3.5, total: 44.5, kickoff: pastKickoff, label: "Ravens @ Bengals", finalScoreA: 27, finalScoreB: 20 };
+    const g2 = { id: newId(), teamA: "Cowboys", teamB: "Eagles", spreadA: 2.5, total: 47.5, kickoff: futureKickoff1, label: "Cowboys @ Eagles", finalScoreA: null, finalScoreB: null };
+    const g3 = { id: newId(), teamA: "Packers", teamB: "Vikings", spreadA: -6, total: 41, kickoff: futureKickoff2, label: "Packers @ Vikings", finalScoreA: null, finalScoreB: null };
+    const week1 = { games: [g1, g2, g3], deadline, locked: false };
+
+    const newRoster = {
+      usernames: ["alice", "bob", "carol"],
+      teamNames: { alice: "Alice's Aces", bob: "Bob's Bombers", carol: "Carol's Crew" },
+      locked: false,
+      pinnedCount: null,
+    };
+
+    const alicePicks = [
+      { id: newId(), gameId: g1.id, type: "spread", selection: "teamA" }, // Ravens -3.5, final 27-20 -> covers, WIN
+      { id: newId(), gameId: g1.id, type: "total", selection: "over" }, // 47 total vs 44.5 line -> WIN
+      { id: newId(), gameId: g2.id, type: "spread", selection: "teamB" },
+      { id: newId(), gameId: g2.id, type: "total", selection: "under" },
+      { id: newId(), gameId: g3.id, type: "spread", selection: "teamA" },
+    ];
+    const bobPicks = [
+      { id: newId(), gameId: g1.id, type: "spread", selection: "teamB" }, // Bengals didn't cover -> LOSS
+      { id: newId(), gameId: g1.id, type: "total", selection: "under" }, // LOSS
+      { id: newId(), gameId: g2.id, type: "spread", selection: "teamA" },
+      // only 3 picks submitted on purpose -> 2 missing slots score as losses
+    ];
+    const carolPicks = [
+      { id: newId(), gameId: g1.id, type: "spread", selection: "teamA" }, // WIN
+      { id: newId(), gameId: g1.id, type: "total", selection: "over" }, // WIN
+      { id: newId(), gameId: g2.id, type: "spread", selection: "teamB" },
+      { id: newId(), gameId: g2.id, type: "total", selection: "over" },
+      { id: newId(), gameId: g3.id, type: "spread", selection: "teamB" },
+    ];
+
+    onWeeksChange({ ...weeksData, 1: week1 });
+    onRosterChange(newRoster);
+    onSetCurrentWeek(1);
+    onPicksChange({ ...picksData, 1: { alice: alicePicks, bob: bobPicks, carol: carolPicks } });
+    (async () => {
+      const hash = await sha256Hex("testpass");
+      await onPasswordsChange({ ...(passwords || {}), alice: hash, bob: hash, carol: hash });
+    })();
+    flash("Test data loaded: 3 games (one already final), 3 players (password: testpass), week locks in ~3 min.");
+  };
+
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const clearAllData = () => {
+    if (!confirmClearAll) { setConfirmClearAll(true); return; }
+    onRosterChange({ usernames: [], teamNames: {}, locked: false, pinnedCount: null });
+    onWeeksChange({});
+    onPicksChange({});
+    onLedgerChange({ adjustments: [] });
+    onSetCurrentWeek(1);
+    setConfirmClearAll(false);
+    flash(`All data cleared for "${seasonName}".`);
+  };
+
+  const [newAdminPw, setNewAdminPw] = useState("");
+  const [newAdminPwConfirm, setNewAdminPwConfirm] = useState("");
+  const [adminPwMsg, setAdminPwMsg] = useState("");
+  const [newRecoveryCode, setNewRecoveryCode] = useState("");
+  const changeAdminPassword = async () => {
+    if (!newAdminPw || newAdminPw !== newAdminPwConfirm) { setAdminPwMsg("Passwords don't match."); return; }
+    const hash = await sha256Hex(newAdminPw);
+    const code = generateRecoveryCode();
+    const codeHash = await sha256Hex(code);
+    await onSetAdminPass(hash);
+    await onSetAdminRecoveryHash(codeHash);
+    setNewAdminPw("");
+    setNewAdminPwConfirm("");
+    setNewRecoveryCode(code);
+    setAdminPwMsg("");
+  };
+
+  return (
+    <div className="space-y-6">
+      <Section title="Banner Updates">
+        <textarea
+          value={commentsDraft}
+          onChange={(e) => setCommentsDraft(e.target.value)}
+          placeholder="e.g. Week 3 games are up — deadline is Sunday 10am MT as usual. Good luck!"
+          rows={4}
+          className="w-full px-2 py-1.5 rounded text-sm mb-2"
+          style={inputStyle()}
+        />
+        <button
+          onClick={async () => { await onCommentsChange(commentsDraft); setCommentsMsg("Saved."); setTimeout(() => setCommentsMsg(""), 2000); }}
+          className="w-full py-2 rounded text-sm display-font" style={{ background: "var(--gold)", color: "#12161C" }}
+        >
+          Save Comments
+        </button>
+        {commentsMsg && <p className="text-[11px] mt-1" style={{ color: "var(--gold)" }}>{commentsMsg}</p>}
+      </Section>
+
+      <Section title="Season Management">
+        <div className="mb-3">
+          <label className="block text-[10px] uppercase tracking-wider mb-1" style={{ color: "var(--muted)" }}>Viewing / editing season</label>
+          <select value={viewingSeasonId} onChange={(e) => onSwitchSeason(e.target.value)} className="w-full px-2 py-1.5 rounded text-sm" style={inputStyle()}>
+            {seasons.list.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}{s.id === seasons.activeSeasonId ? " (current)" : ""}</option>
+            ))}
+          </select>
+          {viewingSeasonId !== seasons.activeSeasonId && (
+            <p className="text-[11px] mt-1" style={{ color: "var(--gold)" }}>You're editing a past season. Players everywhere are still submitting picks for "{seasons.list.find((s) => s.id === seasons.activeSeasonId)?.name}".</p>
+          )}
+        </div>
+
+        <div className="space-y-1 mb-4">
+          {seasons.list.map((s) => (
+            <div key={s.id} className="flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded" style={{ background: "var(--surface)" }}>
+              <span>{s.name} {s.id === seasons.activeSeasonId && <Pill tone="win">current</Pill>}</span>
+              {seasons.list.length > 1 && (
+                <button onClick={() => deleteSeason(s.id)} className="px-2 py-0.5 rounded" style={{ color: "var(--loss)" }}>
+                  {confirmDeleteSeasonId === s.id ? "Click again to confirm" : "Delete"}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--muted)" }}>Start a new season</p>
+        <div className="flex gap-2 mb-2">
+          <input value={newSeasonName} onChange={(e) => setNewSeasonName(e.target.value)} placeholder="new pool name, e.g. LMPE 2027" className="flex-1 px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <button onClick={startNewSeason} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--gold)", color: "#12161C" }}>Start New Season</button>
+        </div>
+        {seasonMsg && <p className="text-[11px]" style={{ color: "var(--gold)" }}>{seasonMsg}</p>}
+        <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>Starting a new season gives everyone a completely fresh roster, weeks, and pot — it does not touch or delete "{seasons.list.find((s) => s.id === seasons.activeSeasonId)?.name}". Anyone can still view past seasons from the season selector at the top of the app; player passwords carry over automatically since they aren't tied to any one season. Deleting a season permanently erases its roster, weeks, picks, and pot — this can't be undone, which is why it takes two clicks.</p>
+      </Section>
+
+      <Section title="Account Security">
+        <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--muted)" }}>Change admin password</p>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <input type="password" value={newAdminPw} onChange={(e) => setNewAdminPw(e.target.value)} placeholder="new password" className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <input type="password" value={newAdminPwConfirm} onChange={(e) => setNewAdminPwConfirm(e.target.value)} placeholder="confirm new password" className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+        </div>
+        <button onClick={changeAdminPassword} className="w-full py-2 rounded text-sm display-font mb-2" style={{ background: "var(--gold)", color: "#12161C" }}>Set New Admin Password</button>
+        {adminPwMsg && <p className="text-[11px] mb-2" style={{ color: "var(--loss)" }}>{adminPwMsg}</p>}
+        <p className="text-[11px]" style={{ color: "var(--muted)" }}>Changing the password also generates a brand new recovery code — share the new password with anyone who needs admin access.</p>
+
+        {newRecoveryCode && (
+          <div className="mt-3 p-3 rounded" style={{ background: "var(--bg)", border: "1px dashed var(--gold)" }}>
+            <p className="text-xs mb-2" style={{ color: "var(--gold)" }}>New recovery code — save this now, it won't be shown again:</p>
+            <div className="text-center py-2 mb-2 rounded mono-font text-lg" style={{ color: "var(--gold)", letterSpacing: "0.1em" }}>{newRecoveryCode}</div>
+            <button
+              onClick={async () => { try { await navigator.clipboard.writeText(newRecoveryCode); flash("Recovery code copied."); } catch { flash("Couldn't copy — select the code manually."); } }}
+              className="w-full py-1.5 rounded text-xs display-font" style={{ background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--text)" }}
+            >
+              Copy to clipboard
+            </button>
+            <button onClick={() => setNewRecoveryCode("")} className="w-full py-1.5 mt-1 rounded text-xs" style={{ color: "var(--muted)" }}>Done, dismiss</button>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Testing">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={seedTestData} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--gold)", color: "#12161C" }}>Seed Test Week</button>
+          <button onClick={clearAllData} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--surface)", border: "1px solid var(--loss)", color: "var(--loss)" }}>
+            {confirmClearAll ? `Click again to clear all "${seasonName}" season data` : "Clear All Data"}
+          </button>
+          {confirmClearAll && <button onClick={() => setConfirmClearAll(false)} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--surface)", color: "var(--muted)" }}>Cancel</button>}
+        </div>
+        <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>Seeds week 1 with 3 games (one already finished 27–20), alice + carol with full pick sets, bob with only 3 picks so you can watch the missing-pick rule score as losses. The week deadline is set 3 minutes out so you can watch it lock live.</p>
+        <p className="text-[11px] mt-1" style={{ color: "var(--muted)" }}>Clear All Data wipes the roster, weeks, picks, and pot for whichever season you're currently viewing/editing ("{seasonName}") — it doesn't distinguish test data from real data, so double-check the season selector above before confirming.</p>
+      </Section>
+
+      <Section title="Roster">
+        <div className="flex gap-2 mb-3">
+          <input value={newUser} onChange={(e) => setNewUser(e.target.value)} placeholder="add username" className="flex-1 px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <button onClick={() => { if (!newUser.trim() || roster.usernames.includes(newUser.trim())) return; onRosterChange({ ...roster, usernames: [...roster.usernames, newUser.trim()] }); setNewUser(""); }} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--gold)", color: "#12161C" }}>Add</button>
+        </div>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {roster.usernames.map((u) => (
+            <span key={u} className="px-2 py-1 rounded text-xs mono-font flex items-center gap-1" style={{ background: "var(--surface)" }}>
+              {roster.teamNames?.[u] || u}
+              <button onClick={() => onRosterChange({ ...roster, usernames: roster.usernames.filter((x) => x !== u) })} style={{ color: "var(--loss)" }}>×</button>
+            </span>
+          ))}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={roster.locked} onChange={(e) => onRosterChange({ ...roster, locked: e.target.checked })} />
+            Roster locked (new usernames can't join)
+          </label>
+          <button onClick={lockRosterAndPin} className="px-2 py-1 rounded text-xs display-font" style={{ background: "var(--surface)", color: "var(--gold)" }}>Lock &amp; pin pot count ({roster.usernames.length})</button>
+        </div>
+        {roster.pinnedCount != null && <p className="text-[11px] mt-1" style={{ color: "var(--muted)" }}>Pot is fixed at ${ENTRY_FEE} × {roster.pinnedCount} players/week.</p>}
+      </Section>
+
+      <Section title="Player Passwords">
+        <div className="space-y-1 mb-4">
+          {roster.usernames.length === 0 && <p className="text-xs" style={{ color: "var(--muted)" }}>No players on the roster yet.</p>}
+          {roster.usernames.map((u) => (
+            <div key={u} className="flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded" style={{ background: "var(--surface)" }}>
+              <span>{u} <Pill tone={passwords?.[u] ? "win" : "muted"}>{passwords?.[u] ? "protected" : "no password"}</Pill></span>
+              {passwords?.[u] && <button onClick={() => resetPassword(u)} className="px-2 py-0.5 rounded" style={{ color: "var(--loss)" }}>Reset</button>}
+            </div>
+          ))}
+        </div>
+        <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--muted)" }}>Assign a password directly (e.g. a temporary one after a reset)</p>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <select value={pwFormUser} onChange={(e) => setPwFormUser(e.target.value)} className="px-2 py-1.5 rounded text-sm" style={inputStyle()}>
+            <option value="">Select player…</option>
+            {roster.usernames.map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <input type="password" placeholder="new password" value={pwFormValue} onChange={(e) => setPwFormValue(e.target.value)} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+        </div>
+        <button onClick={setPasswordDirect} className="w-full py-2 rounded text-sm display-font" style={{ background: "var(--gold)", color: "#12161C" }}>Set Password</button>
+        {pwFormMsg && <p className="text-[11px] mt-2" style={{ color: "var(--gold)" }}>{pwFormMsg}</p>}
+        <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>Passwords are hashed (SHA-256) before being stored — not plain text — but this is still a casual-league safeguard, not bank-grade security. They're global, shared across every season, not tied to this one.</p>
+      </Section>
+
+      <Section title="Current Week">
+        <div className="p-3 rounded-lg mb-3" style={{ background: "rgba(212,175,55,0.15)", border: "2px solid var(--gold)" }}>
+          <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: "var(--gold)" }}>You are editing</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <select
+              value={meta.currentWeek}
+              onChange={(e) => onSetCurrentWeek(Number(e.target.value))}
+              className="px-3 py-2 rounded display-font text-xl font-bold"
+              style={{ background: "var(--bg)", border: "2px solid var(--gold)", color: "var(--gold)" }}
+            >
+              {[...new Set([...weekNums, meta.currentWeek])].sort((a, b) => a - b).map((wn) => <option key={wn} value={wn}>Week {wn}</option>)}
+            </select>
+            <button
+              disabled={Math.max(...weekNums, 0) >= MAX_WEEKS}
+              onClick={() => onSetCurrentWeek(Math.min(MAX_WEEKS, Math.max(...weekNums, meta.currentWeek) + 1))}
+              className="px-3 py-2 rounded text-sm display-font" style={{ background: "var(--surface)", color: "var(--text)" }}
+            >
+              + New Week
+            </button>
+            <span className="text-sm" style={{ color: "var(--muted)" }}>of {seasonName} — every action below (games, results, imports, exports) applies to this week</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <button onClick={exportWeekXlsx} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--surface)", color: "var(--gold)" }}>Export Current Week</button>
+          <button onClick={exportSeasonXlsx} className="px-3 py-1.5 rounded text-sm display-font" style={{ background: "var(--surface)", color: "var(--gold)" }}>Export Season</button>
+        </div>
+
+        {exportPreview && (
+          <div className="mt-3 p-3 rounded" style={{ background: "var(--surface)", border: "1px solid var(--hairline)" }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs mono-font" style={{ color: "var(--muted)" }}>{exportPreview.filename}</span>
+              <div className="flex gap-2">
+                {exportPreview.csv != null && (
+                  <button
+                    onClick={async () => {
+                      try { await navigator.clipboard.writeText(exportPreview.csv); flash("Copied to clipboard."); }
+                      catch { flash("Clipboard blocked too — select the text below and copy manually."); }
+                    }}
+                    className="px-2 py-1 rounded text-xs display-font" style={{ background: "var(--gold)", color: "#12161C" }}
+                  >
+                    Copy to clipboard
+                  </button>
+                )}
+                <button onClick={() => setExportPreview(null)} className="px-2 py-1 rounded text-xs" style={{ color: "var(--muted)" }}>×</button>
+              </div>
+            </div>
+            {exportPreview.csv != null ? (
+              <>
+                <textarea readOnly value={exportPreview.csv} rows={6} onClick={(e) => e.target.select()} className="w-full px-2 py-1.5 rounded text-xs mono-font" style={inputStyle()} />
+                <p className="text-[11px] mt-1" style={{ color: "var(--muted)" }}>If the download button didn't drop a file, paste this into a spreadsheet, or save it as a .csv file yourself.</p>
+              </>
+            ) : (
+              <p className="text-[11px]" style={{ color: "var(--muted)" }}>{exportPreview.note}</p>
+            )}
+          </div>
+        )}
+
+        <div className="mb-3">
+          <label className="block text-xs uppercase tracking-wide mb-1" style={{ color: "var(--muted)" }}>Pick deadline (Sun 10a MT rule)</label>
+          <div className="flex gap-2 flex-wrap">
+            <input type="datetime-local" value={toLocalDatetimeValue(editWeek.deadline)} onChange={(e) => saveWeek({ deadline: new Date(e.target.value).toISOString() })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+            <button onClick={() => saveWeek({ deadline: nextSundayMT10ISO() })} className="px-3 py-1.5 rounded text-xs display-font" style={{ background: "var(--surface)", border: "1px solid var(--gold)", color: "var(--gold)" }}>set next Sun 10a MT</button>
+          </div>
+          <p className="text-[11px] mt-1" style={{ color: "var(--muted)" }}>This fills in automatically to Sun 10am MT of that week the moment you add or import games — you only need to touch this if you want to override it.</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm mb-4">
+          <input type="checkbox" checked={!!editWeek.locked} onChange={(e) => saveWeek({ locked: e.target.checked })} />
+          Force-lock this week now (overrides deadline)
+        </label>
+
+        <div className="mb-4 p-3 rounded" style={{ background: "var(--surface)" }}>
+          <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--muted)" }}>the-odds-api.com integration</p>
+
+          <div className="mb-3 p-2 rounded" style={{ background: "rgba(212,175,55,0.12)", border: "1px solid var(--gold)" }}>
+            <label className="flex items-center gap-2 text-sm" style={{ color: "var(--gold)" }}>
+              <input type="checkbox" checked={importConfirmed} onChange={(e) => setImportConfirmed(e.target.checked)} />
+              I confirm I want to import odds/scores into <strong>Week {meta.currentWeek}</strong>
+            </label>
+          </div>
+
+          <input type="password" value={oddsApiKey} onChange={(e) => setOddsApiKey(e.target.value)} placeholder="your the-odds-api.com API key" className="w-full px-2 py-1.5 rounded text-sm mb-2" style={inputStyle()} />
+          <p className="text-[11px] uppercase tracking-wide mb-1" style={{ color: "var(--muted)" }}>Only import games between (required)</p>
+          <div className="grid grid-cols-2 gap-2 mb-1">
+            <input type="datetime-local" value={importFrom} onChange={(e) => setImportFrom(e.target.value)} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+            <input type="datetime-local" value={importTo} onChange={(e) => setImportTo(e.target.value)} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <p className="text-[11px] mono-font" style={{ color: "var(--gold)" }}>{importFrom ? fmtMilitary(importFrom) : ""}</p>
+            <p className="text-[11px] mono-font" style={{ color: "var(--gold)" }}>{importTo ? fmtMilitary(importTo) : ""}</p>
+          </div>
+          <div className="flex gap-2 mb-2 flex-wrap">
+            <button disabled={!importConfirmed || !importFrom || !importTo} onClick={fetchOddsLive} className="px-3 py-1.5 rounded text-xs display-font" style={importConfirmed && importFrom && importTo ? { background: "var(--gold)", color: "#12161C" } : { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--muted)" }}>Pull odds (spreads/totals)</button>
+            <button disabled={!importConfirmed} onClick={fetchScoresLive} className="px-3 py-1.5 rounded text-xs display-font" style={importConfirmed ? { background: "var(--gold)", color: "#12161C" } : { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--muted)" }}>Pull final scores</button>
+          </div>
+          <p className="text-[11px] mb-2" style={{ color: "var(--muted)" }}>If a live pull fails (sandboxed browsers sometimes block cross-site requests), fetch the URL yourself and paste the JSON response here:</p>
+          <textarea value={pastePayload} onChange={(e) => setPastePayload(e.target.value)} placeholder="paste API JSON response" rows={3} className="w-full px-2 py-1.5 rounded text-xs mono-font mb-2" style={inputStyle()} />
+          <div className="flex gap-2">
+            <button disabled={!importConfirmed || !importFrom || !importTo} onClick={importPastedOdds} className="px-3 py-1.5 rounded text-xs display-font" style={importConfirmed && importFrom && importTo ? { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--text)" } : { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--muted)", opacity: 0.5 }}>Import pasted odds</button>
+            <button disabled={!importConfirmed} onClick={importPastedScores} className="px-3 py-1.5 rounded text-xs display-font" style={importConfirmed ? { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--text)" } : { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--muted)", opacity: 0.5 }}>Import pasted scores</button>
+          </div>
+          {!importConfirmed && <p className="text-[11px] mt-2" style={{ color: "var(--loss)" }}>Check the box above to enable importing.</p>}
+          {importConfirmed && (!importFrom || !importTo) && <p className="text-[11px] mt-2" style={{ color: "var(--loss)" }}>Set both dates above to enable odds import — final scores don't need a date range since they're matched to games already in this week.</p>}
+          {fetchMsg && <p className="text-xs mt-2" style={{ color: "var(--gold)" }}>{fetchMsg}</p>}
+        </div>
+
+        <div className="mb-3 grid grid-cols-2 gap-2">
+          <input placeholder="Team A (away)" value={gameForm.teamA} onChange={(e) => setGameForm({ ...gameForm, teamA: e.target.value })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <input placeholder="Team B (home)" value={gameForm.teamB} onChange={(e) => setGameForm({ ...gameForm, teamB: e.target.value })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <input placeholder="Team A spread e.g. -3.5" value={gameForm.spreadA} onChange={(e) => setGameForm({ ...gameForm, spreadA: e.target.value })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <input placeholder="Total e.g. 44.5" value={gameForm.total} onChange={(e) => setGameForm({ ...gameForm, total: e.target.value })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()} />
+          <input type="datetime-local" value={gameForm.kickoff} onChange={(e) => setGameForm({ ...gameForm, kickoff: e.target.value })} className="px-2 py-1.5 rounded text-sm col-span-2" style={inputStyle()} />
+        </div>
+        <button onClick={addGame} className="w-full py-2 rounded text-sm display-font mb-4" style={{ background: "var(--gold)", color: "#12161C" }}>Add Game Manually</button>
+
+        {(editWeek.games || []).length > 0 && (
+          <div className="flex gap-2 mb-3">
+            <button onClick={clearAllGames} className="flex-1 py-1.5 rounded text-xs display-font" style={{ background: "var(--surface)", border: "1px solid var(--loss)", color: "var(--loss)" }}>
+              {confirmClearGames ? `Click again to clear all ${(editWeek.games || []).length} games` : "Clear All Games for This Week"}
+            </button>
+            {confirmClearGames && <button onClick={() => setConfirmClearGames(false)} className="px-3 py-1.5 rounded text-xs display-font" style={{ background: "var(--surface)", color: "var(--muted)" }}>Cancel</button>}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {sortByKickoff(editWeek.games || []).map((g) => {
+            const result = computeGameResult(g);
+            return (
+              <TicketCard key={g.id}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-sm">{g.label}</span>
+                  <button onClick={() => removeGame(g.id)} className="text-xs" style={{ color: "var(--loss)" }}>remove</button>
+                </div>
+                <div className="text-xs mono-font mb-2" style={{ color: "var(--muted)" }}>
+                  {g.teamA} {fmtSpread(g.spreadA)} &middot; {g.teamB} {fmtSpread(-Number(g.spreadA || 0))} &middot; O/U {g.total} {g.kickoff && <>&middot; kickoff {fmtKickoff(g.kickoff)}</>} {isGameLocked(g) && <Pill tone="loss">started</Pill>}
+                </div>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <input placeholder={`${g.teamA} final`} value={g.finalScoreA ?? ""} onChange={(e) => updateGame(g.id, { finalScoreA: e.target.value === "" ? null : Number(e.target.value) })} className="px-2 py-1.5 rounded text-xs" style={inputStyle()} />
+                  <input placeholder={`${g.teamB} final`} value={g.finalScoreB ?? ""} onChange={(e) => updateGame(g.id, { finalScoreB: e.target.value === "" ? null : Number(e.target.value) })} className="px-2 py-1.5 rounded text-xs" style={inputStyle()} />
+                </div>
+                {result && (
+                  <div className="text-xs mono-font">
+                    Cover: <span style={{ color: "var(--gold)" }}>{result.spreadWinner === "push" ? "push" : result.spreadWinner === "teamA" ? g.teamA : g.teamB}</span> &middot; Total: <span style={{ color: "var(--gold)" }}>{result.totalResult}</span>
+                  </div>
+                )}
+              </TicketCard>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section title="Correct Monies Owed">
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <select value={adjForm.username} onChange={(e) => setAdjForm({ ...adjForm, username: e.target.value })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()}>
+            <option value="">Select player…</option>
+            {roster.usernames.map((u) => <option key={u} value={u}>{roster.teamNames?.[u] || u}</option>)}
+          </select>
+          <select value={adjForm.field} onChange={(e) => setAdjForm({ ...adjForm, field: e.target.value })} className="px-2 py-1.5 rounded text-sm" style={inputStyle()}>
+            <option value="paid">Adjust amount paid</option>
+            <option value="won">Adjust amount won</option>
+          </select>
+          <input placeholder="amount (use negative to subtract)" value={adjForm.amount} onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} className="px-2 py-1.5 rounded text-sm col-span-2" style={inputStyle()} />
+          <input placeholder="note (optional)" value={adjForm.note} onChange={(e) => setAdjForm({ ...adjForm, note: e.target.value })} className="px-2 py-1.5 rounded text-sm col-span-2" style={inputStyle()} />
+        </div>
+        <button onClick={addAdjustment} className="w-full py-2 rounded text-sm display-font mb-3" style={{ background: "var(--gold)", color: "#12161C" }}>Add Adjustment</button>
+        <div className="space-y-1">
+          {(ledger.adjustments || []).map((a) => (
+            <div key={a.id} className="flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded" style={{ background: "var(--surface)" }}>
+              <span>{roster.teamNames?.[a.username] || a.username}: {a.field} {a.amount >= 0 ? "+" : ""}{a.amount} {a.note && `(${a.note})`}</span>
+              <button onClick={() => removeAdjustment(a.id)} style={{ color: "var(--loss)" }}>×</button>
+            </div>
+          ))}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+
+  /* ================= END APP CODE ================= */
+
+  const root = ReactDOM.createRoot(document.getElementById("root"));
+  root.render(<PickemLeague />);
+</script>
+</body>
+</html>
