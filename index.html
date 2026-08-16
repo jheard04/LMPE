@@ -911,18 +911,28 @@ function PicksTab({ identity, week, weekNum, locked, roster, picksData, authed, 
   if (!identity.trim()) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Enter your username up top to make picks." });
   if (roster.locked && !roster.usernames.includes(identity.trim())) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Roster is locked and this username isn't on it. Ask the admin to add you." });
   if (!authed) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Enter your password up top (or set one if this is your first time) to make picks." });
-  const update = (idx, field, value) => {
+  const togglePick = (game, type, selection) => {
+    if (locked || isGameLocked(game)) return;
     setSlots((prev) => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], [field]: value };
-      if (field === "gameId" || field === "type") next[idx].selection = "";
-      if (field === "gameId") {
-        const otherSlots = prev.filter((_, i) => i !== idx);
-        const usedCombos = new Set(otherSlots.filter((s) => s.gameId && s.type).map((s) => `${s.gameId}:${s.type}`));
-        if (usedCombos.has(`${value}:${next[idx].type}`)) {
-          next[idx].type = usedCombos.has(`${value}:spread`) ? "total" : "spread";
-        }
+      const existingIdx = prev.findIndex((s) => s.gameId === game.id && s.type === type && s.selection === selection);
+      if (existingIdx !== -1) {
+        const next2 = [...prev];
+        next2[existingIdx] = { ...next2[existingIdx], gameId: "", type: "spread", selection: "" };
+        return next2;
       }
+      const oppositeIdx = prev.findIndex((s) => s.gameId === game.id && s.type === type && s.selection && s.selection !== selection);
+      if (oppositeIdx !== -1) {
+        const next2 = [...prev];
+        next2[oppositeIdx] = { ...next2[oppositeIdx], selection };
+        return next2;
+      }
+      const blankIdx = prev.findIndex((s) => !s.gameId);
+      if (blankIdx === -1) {
+        alert("You already have 5 picks selected. Tap one of your gold picks to remove it first.");
+        return prev;
+      }
+      const next = [...prev];
+      next[blankIdx] = { ...next[blankIdx], gameId: game.id, type, selection };
       return next;
     });
   };
@@ -933,15 +943,14 @@ function PicksTab({ identity, week, weekNum, locked, roster, picksData, authed, 
   });
   const savableSlots = completeSlots.filter((s) => !lockedCompleteSlots.includes(s));
   const canSave = !locked && savableSlots.length > 0;
-  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs", style: { color: "var(--muted)" } }, "Fill in as few or as many of the 5 slots as you like and submit \u2014 you don't need all 5 at once. Anything left blank at the deadline scores as a loss."), /* @__PURE__ */ React.createElement("p", { className: "text-center text-2xl display-font", style: { color: "var(--gold)" } }, "Week ", weekNum, " of ", MAX_WEEKS, " \u2014 $", Math.round(weekPotValue)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-center gap-2 text-xs mono-font", style: { color: "var(--muted)" } }, /* @__PURE__ */ React.createElement("span", null, locked ? "PICKS LOCKED FOR THE WEEK" : `open until ${week.deadline ? new Date(week.deadline).toLocaleString(void 0, { weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) : "\u2014"}`), /* @__PURE__ */ React.createElement(Pill, { tone: locked ? "loss" : "win" }, locked ? "closed" : "open")), slots.map((slot, idx) => {
-    const game = week.games.find((g) => g.id === slot.gameId);
-    const otherSlots = slots.filter((_, i) => i !== idx);
-    const usedCombos = new Set(otherSlots.filter((s) => s.gameId && s.type).map((s) => `${s.gameId}:${s.type}`));
-    const options = game ? BET_OPTIONS(game)[slot.type] : [];
-    const slotLocked = locked || game && isGameLocked(game);
-    const gameFullyClaimed = (g) => usedCombos.has(`${g.id}:spread`) && usedCombos.has(`${g.id}:total`);
-    const optionGames = sortByKickoff(week.games.filter((g) => !gameFullyClaimed(g) || g.id === slot.gameId));
-    return /* @__PURE__ */ React.createElement(TicketCard, { key: slot.id, accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "mono-font text-xs", style: { color: "var(--gold)" } }, "PICK ", idx + 1), slotLocked && game && isGameLocked(game) && /* @__PURE__ */ React.createElement(Pill, { tone: "loss" }, "game started")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, /* @__PURE__ */ React.createElement("select", { disabled: slotLocked, value: slot.gameId, onChange: (e) => update(idx, "gameId", e.target.value), className: "px-2 py-2 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Select game\u2026"), optionGames.map((g) => /* @__PURE__ */ React.createElement("option", { key: g.id, value: g.id, disabled: isGameLocked(g) && g.id !== slot.gameId }, g.label, " \u2014 ", fmtKickoff(g.kickoff), isGameLocked(g) ? " (started)" : ""))), /* @__PURE__ */ React.createElement("select", { disabled: slotLocked || !slot.gameId, value: slot.type, onChange: (e) => update(idx, "type", e.target.value), className: "px-2 py-2 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "spread", disabled: usedCombos.has(`${slot.gameId}:spread`) }, "Spread", usedCombos.has(`${slot.gameId}:spread`) ? " (already picked)" : ""), /* @__PURE__ */ React.createElement("option", { value: "total", disabled: usedCombos.has(`${slot.gameId}:total`) }, "Over/Under", usedCombos.has(`${slot.gameId}:total`) ? " (already picked)" : ""))), /* @__PURE__ */ React.createElement("select", { disabled: slotLocked || !game, value: slot.selection, onChange: (e) => update(idx, "selection", e.target.value), className: "w-full px-2 py-2 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Select pick\u2026"), options.map((o) => /* @__PURE__ */ React.createElement("option", { key: o.value, value: o.value }, o.label))));
+  const filledCount = completeSlots.length;
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs", style: { color: "var(--muted)" } }, "Tap any line below to pick it, tap again to remove it, or tap the other side to swap \u2014 fill in as few or as many as you like and submit. Anything left blank at the deadline scores as a loss."), /* @__PURE__ */ React.createElement("p", { className: "text-center text-2xl display-font", style: { color: "var(--gold)" } }, "Week ", weekNum, " of ", MAX_WEEKS, " \u2014 $", Math.round(weekPotValue)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-center gap-2 text-xs mono-font", style: { color: "var(--muted)" } }, /* @__PURE__ */ React.createElement("span", null, locked ? "PICKS LOCKED FOR THE WEEK" : `open until ${week.deadline ? new Date(week.deadline).toLocaleString(void 0, { weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }) : "\u2014"}`), /* @__PURE__ */ React.createElement(Pill, { tone: locked ? "loss" : "win" }, locked ? "closed" : "open")), /* @__PURE__ */ React.createElement("p", { className: "text-center text-sm display-font", style: { color: filledCount === 5 ? "var(--win)" : "var(--gold)" } }, filledCount, " of 5 picks selected"), sortByKickoff(week.games).map((game) => {
+    const gLocked = locked || isGameLocked(game);
+    const spreadOpts = BET_OPTIONS(game).spread;
+    const totalOpts = BET_OPTIONS(game).total;
+    const isSelected = (type, sel) => slots.some((s) => s.gameId === game.id && s.type === type && s.selection === sel);
+    const betBtnStyle = (selected) => selected ? { background: "var(--gold)", color: "#12161C", fontWeight: 600, border: "1px solid var(--gold)" } : { background: "var(--bg)", border: "1px solid var(--hairline)", color: gLocked ? "var(--muted)" : "var(--text)" };
+    return /* @__PURE__ */ React.createElement(TicketCard, { key: game.id, accent: gLocked ? void 0 : "var(--gold)" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, game.label), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs mono-font", style: { color: "var(--muted)" } }, fmtKickoff(game.kickoff)), gLocked && /* @__PURE__ */ React.createElement(Pill, { tone: "loss" }, "started"))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: "var(--muted)" } }, "Spread"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, spreadOpts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, disabled: gLocked, onClick: () => togglePick(game, "spread", o.value), className: "px-2 py-2 rounded text-sm", style: betBtnStyle(isSelected("spread", o.value)) }, o.label))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: "var(--muted)" } }, "Over / Under"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2" }, totalOpts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, disabled: gLocked, onClick: () => togglePick(game, "total", o.value), className: "px-2 py-2 rounded text-sm", style: betBtnStyle(isSelected("total", o.value)) }, o.label))));
   }), !locked && /* @__PURE__ */ React.createElement(
     "button",
     {
