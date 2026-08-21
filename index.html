@@ -5,14 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>LMPE Pick 'em League</title>
 
-<!-- Tailwind (JIT, in-browser, no build step needed) -->
 <script src="https://cdn.tailwindcss.com"></script>
 
-<!-- React + ReactDOM (UMD builds, no bundler required) -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-<!-- Firebase (compat SDK — simplest global-namespace API, no bundler needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
@@ -24,9 +21,6 @@
 <div id="root"></div>
 
 <script>
-  // =====================================================================
-  // FIREBASE SETUP
-  // =====================================================================
   const firebaseConfig = {
     apiKey: "AIzaSyBq1uc09gn3estwAyjIeZm78_qO-h6Ycew",
     authDomain: "lmpe-e6b19.firebaseapp.com",
@@ -45,12 +39,6 @@
     return key.replace(/[.#$\[\]\/]/g, "_");
   }
 
-  // Reimplements the exact same get/set/delete/list interface the app
-  // already expects (originally backed by Claude's window.storage) — so the
-  // app's own code needs ZERO changes. "shared" data goes to Firebase
-  // (genuinely shared across every visitor); "personal" data goes to this
-  // browser's own localStorage (matching the original per-browser behavior
-  // for things like your remembered username).
   window.storage = {
     async get(key, shared) {
       if (!shared) {
@@ -92,13 +80,6 @@
   };
 </script>
 
-<!--
-  The app below is pre-compiled plain JavaScript (built from the original
-  JSX using esbuild ahead of time), NOT raw JSX run through an in-browser
-  transformer. This avoids relying on Babel's in-browser transform at
-  runtime entirely — faster to load, and nothing left to go wrong at
-  parse time in the visitor's own browser.
--->
 <script>
   const { useState, useEffect, useMemo } = React;
 
@@ -949,8 +930,14 @@ function PicksTab({ identity, week, weekNum, locked, roster, picksData, authed, 
     const spreadOpts = BET_OPTIONS(game).spread;
     const totalOpts = BET_OPTIONS(game).total;
     const isSelected = (type, sel) => slots.some((s) => s.gameId === game.id && s.type === type && s.selection === sel);
+    const result = computeGameResult(game);
+    const isWinningOutcome = (type, sel) => {
+      if (!result) return false;
+      return type === "spread" ? result.spreadWinner === sel : result.totalResult === sel;
+    };
     const betBtnStyle = (selected) => selected ? { background: "var(--gold)", color: "#12161C", fontWeight: 600, border: "1px solid var(--gold)" } : { background: "var(--bg)", border: "1px solid var(--hairline)", color: gLocked ? "var(--muted)" : "var(--text)" };
-    return /* @__PURE__ */ React.createElement(TicketCard, { key: game.id, accent: gLocked ? void 0 : "var(--gold)" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, game.label), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs mono-font", style: { color: "var(--muted)" } }, fmtKickoff(game.kickoff)), gLocked && /* @__PURE__ */ React.createElement(Pill, { tone: "loss" }, "closed"))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: "var(--muted)" } }, "Spread"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, spreadOpts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, disabled: gLocked, onClick: () => togglePick(game, "spread", o.value), className: "px-2 py-2 rounded text-sm", style: betBtnStyle(isSelected("spread", o.value)) }, o.label))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: "var(--muted)" } }, "Over / Under"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2" }, totalOpts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, disabled: gLocked, onClick: () => togglePick(game, "total", o.value), className: "px-2 py-2 rounded text-sm", style: betBtnStyle(isSelected("total", o.value)) }, o.label))));
+    const WinBadge = () => /* @__PURE__ */ React.createElement("span", { className: "ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold", style: { background: "var(--win)", color: "#0A1628" } }, "WIN");
+    return /* @__PURE__ */ React.createElement(TicketCard, { key: game.id, accent: gLocked ? void 0 : "var(--gold)" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium" }, game.label), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs mono-font", style: { color: "var(--muted)" } }, fmtKickoff(game.kickoff)), gLocked && /* @__PURE__ */ React.createElement(Pill, { tone: "loss" }, "closed"))), game.finalScoreA != null && game.finalScoreB != null && /* @__PURE__ */ React.createElement("p", { className: "text-xs mono-font mb-2", style: { color: "var(--gold)" } }, "Final: ", game.teamA, " ", game.finalScoreA, " \u2014 ", game.teamB, " ", game.finalScoreB), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: "var(--muted)" } }, "Spread"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, spreadOpts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, disabled: gLocked, onClick: () => togglePick(game, "spread", o.value), className: "px-2 py-2 rounded text-sm", style: betBtnStyle(isSelected("spread", o.value)) }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center justify-center" }, o.label, isWinningOutcome("spread", o.value) && /* @__PURE__ */ React.createElement(WinBadge, null))))), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: "var(--muted)" } }, "Over / Under"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2" }, totalOpts.map((o) => /* @__PURE__ */ React.createElement("button", { key: o.value, disabled: gLocked, onClick: () => togglePick(game, "total", o.value), className: "px-2 py-2 rounded text-sm", style: betBtnStyle(isSelected("total", o.value)) }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center justify-center" }, o.label, isWinningOutcome("total", o.value) && /* @__PURE__ */ React.createElement(WinBadge, null))))));
   }), !locked && /* @__PURE__ */ React.createElement(
     "button",
     {
