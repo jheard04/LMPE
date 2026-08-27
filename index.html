@@ -286,10 +286,7 @@ function computeStandings(roster, weeksData, picksData, ledger) {
   var _a;
   const usernames = roster.usernames || [];
   const stats = {};
-  usernames.forEach((u) => {
-    var _a2;
-    return stats[u] = { username: u, teamName: ((_a2 = roster.teamNames) == null ? void 0 : _a2[u]) || u, wins: 0, losses: 0, weeksPlayed: 0, totalPaid: 0, totalWon: 0, perfectWeeks: 0, wonWeeks: [], oferOwed: 0, oferWeeks: [] };
-  });
+  usernames.forEach((u) => stats[u] = { username: u, wins: 0, losses: 0, weeksPlayed: 0, totalPaid: 0, totalWon: 0, perfectWeeks: 0, wonWeeks: [], oferOwed: 0, oferWeeks: [] });
   const potBase = (_a = roster.pinnedCount) != null ? _a : usernames.length;
   const weekNums = Object.keys(weeksData || {}).map(Number).sort((a, b) => a - b);
   let carryPot = 0;
@@ -550,7 +547,7 @@ function PickemLeague() {
   const [seasons, setSeasons] = useState({ list: [{ id: "season-1", name: DEFAULT_SEASON_NAME, createdAt: "" }], activeSeasonId: "season-1" });
   const [viewingSeasonId, setViewingSeasonId] = useState("season-1");
   const [meta, setMeta] = useState({ currentWeek: 1 });
-  const [roster, setRoster] = useState({ usernames: [], teamNames: {}, locked: false, pinnedCount: null });
+  const [roster, setRoster] = useState({ usernames: [], locked: false, pinnedCount: null });
   const [weeksData, setWeeksData] = useState({});
   const [picksData, setPicksData] = useState({});
   const [ledger, setLedger] = useState({ adjustments: [] });
@@ -560,7 +557,6 @@ function PickemLeague() {
   const [adminRecoveryHash, setAdminRecoveryHash] = useState(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [identity, setIdentity] = useState("");
-  const [teamName, setTeamName] = useState("");
   const [authedUser, setAuthedUser] = useState(null);
   const [pwInput, setPwInput] = useState("");
   const [authMsg, setAuthMsg] = useState("");
@@ -603,7 +599,7 @@ function PickemLeague() {
     (async () => {
       const [m, r, w, p, l, c] = await Promise.all([
         loadJSON(keys.meta, { currentWeek: 1 }),
-        loadJSON(keys.roster, { usernames: [], teamNames: {}, locked: false, pinnedCount: null }),
+        loadJSON(keys.roster, { usernames: [], locked: false, pinnedCount: null }),
         loadJSON(keys.weeks, {}),
         loadJSON(keys.picks, {}),
         loadJSON(keys.ledger, { adjustments: [] }),
@@ -674,14 +670,6 @@ function PickemLeague() {
     } catch (e) {
     }
   };
-  const persistTeamName = async (name) => {
-    if (authedUser !== identity.trim()) return;
-    setTeamName(name);
-    if (identity.trim()) {
-      const next = { ...roster, teamNames: { ...roster.teamNames, [identity.trim()]: name } };
-      await persistRoster(next);
-    }
-  };
   const handleUnlockOrClaim = async () => {
     const uname = identity.trim();
     if (!uname) {
@@ -719,12 +707,6 @@ function PickemLeague() {
   };
   const currentWeek = weeksData[meta.currentWeek];
   const currentLocked = isWeekLocked(currentWeek);
-  useEffect(() => {
-    var _a2;
-    const uname = identity.trim();
-    if (uname && ((_a2 = roster.teamNames) == null ? void 0 : _a2[uname]) != null) setTeamName(roster.teamNames[uname]);
-    else if (!uname) setTeamName("");
-  }, [identity, roster.teamNames]);
   const standings = useMemo(() => computeStandings(roster, weeksData, picksData, ledger), [roster, weeksData, picksData, ledger]);
   const weekPotValue = ENTRY_FEE * ((_a = roster.pinnedCount) != null ? _a : roster.usernames.length) + standings.carryPot;
   const authed = !!authedUser && identity.trim() !== "" && authedUser === identity.trim();
@@ -739,7 +721,7 @@ function PickemLeague() {
         .display-font { font-family: 'Oswald', sans-serif; letter-spacing: 0.02em; }
         .mono-font { font-family: 'JetBrains Mono', monospace; }
         select, input, textarea { color-scheme: dark; }
-      `), /* @__PURE__ */ React.createElement("div", { className: "max-w-3xl mx-auto px-4 py-6" }, /* @__PURE__ */ React.createElement("header", { className: "flex flex-wrap items-start justify-between gap-3 mb-4 pb-4", style: { borderBottom: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "display-font text-2xl font-bold", style: { color: "var(--gold)" } }, viewingSeason == null ? void 0 : viewingSeason.name), seasons.list.length > 1 && /* @__PURE__ */ React.createElement("select", { value: viewingSeasonId, onChange: (e) => setViewingSeasonId(e.target.value), className: "mt-2 px-2 py-1 rounded text-xs", style: inputStyle() }, seasons.list.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, s.name, s.id === seasons.activeSeasonId ? " (current)" : " (archived)")))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-end gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("label", { className: "block text-[10px] uppercase tracking-wider mb-1", style: { color: "var(--muted)" } }, "username"), /* @__PURE__ */ React.createElement("input", { value: identity, onChange: (e) => persistIdentity(e.target.value), placeholder: "username", className: "px-2 py-1 rounded text-sm text-right w-28", style: inputStyle() })), /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("label", { className: "block text-[10px] uppercase tracking-wider mb-1", style: { color: "var(--muted)" } }, "team name"), /* @__PURE__ */ React.createElement("input", { disabled: !authed, value: teamName, onChange: (e) => persistTeamName(e.target.value), placeholder: authed ? "team name" : "unlock to edit", className: "px-2 py-1 rounded text-sm text-right w-28", style: inputStyle() }))), identity.trim() && !authed && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+      `), /* @__PURE__ */ React.createElement("div", { className: "max-w-3xl mx-auto px-4 py-6" }, /* @__PURE__ */ React.createElement("header", { className: "flex flex-wrap items-start justify-between gap-3 mb-4 pb-4", style: { borderBottom: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "display-font text-2xl font-bold", style: { color: "var(--gold)" } }, viewingSeason == null ? void 0 : viewingSeason.name), seasons.list.length > 1 && /* @__PURE__ */ React.createElement("select", { value: viewingSeasonId, onChange: (e) => setViewingSeasonId(e.target.value), className: "mt-2 px-2 py-1 rounded text-xs", style: inputStyle() }, seasons.list.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, s.name, s.id === seasons.activeSeasonId ? " (current)" : " (archived)")))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-end gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("label", { className: "block text-[10px] uppercase tracking-wider mb-1", style: { color: "var(--muted)" } }, "username"), /* @__PURE__ */ React.createElement("input", { value: identity, onChange: (e) => persistIdentity(e.target.value), placeholder: "username", className: "px-2 py-1 rounded text-sm text-right w-28", style: inputStyle() })), identity.trim() && !authed && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "password",
@@ -1024,7 +1006,7 @@ function LeaderboardTab({ standings }) {
     }
     return (a[sortKey] - b[sortKey]) * dir;
   });
-  const cols = [["teamName", "Team"], ["wins", "W"], ["losses", "L"], ["pct", "Win %"], ["totalWon", "Earnings"]];
+  const cols = [["username", "Username"], ["wins", "W"], ["losses", "L"], ["pct", "Win %"], ["totalWon", "Earnings"]];
   const setSort = (k) => {
     if (k === sortKey) setDir((d) => -d);
     else {
@@ -1035,7 +1017,7 @@ function LeaderboardTab({ standings }) {
   if (rows.length === 0) return /* @__PURE__ */ React.createElement(EmptyState, { text: "No one's on the roster yet." });
   return /* @__PURE__ */ React.createElement("div", null, standings.carryPot > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(212,175,55,0.12)", color: "var(--gold)" } }, "Carryover Pot: $", standings.carryPot.toFixed(2)), standings.oferPotTotal > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(192,82,75,0.12)", color: "var(--loss)" } }, "O-Fer Pot: $", standings.oferPotTotal.toFixed(2)), /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")), /* @__PURE__ */ React.createElement("th", { onClick: () => setSort("oferOwed"), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === "oferOwed" ? "var(--gold)" : "var(--muted)" } }, "O-fer ", sortKey === "oferOwed" ? dir === 1 ? "\u2191" : "\u2193" : ""), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "Wks Won"))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, rows.map((r, i) => {
     const pct = r.wins + r.losses ? Math.round(r.wins / (r.wins + r.losses) * 100) : 0;
-    return /* @__PURE__ */ React.createElement("tr", { key: r.username, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium" }, r.teamName), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--win)" } }, r.wins), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--loss)" } }, r.losses), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.totalWon > 0 ? "var(--gold)" : "var(--text)" } }, "$", r.totalWon.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.oferOwed > 0 ? "var(--loss)" : "var(--text)" } }, "$", r.oferOwed.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--gold)" } }, r.wonWeeks.length > 0 ? r.wonWeeks.map((w) => `Wk ${w}`).join(", ") : "\u2014"));
+    return /* @__PURE__ */ React.createElement("tr", { key: r.username, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium" }, r.username), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--win)" } }, r.wins), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--loss)" } }, r.losses), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.totalWon > 0 ? "var(--gold)" : "var(--text)" } }, "$", r.totalWon.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.oferOwed > 0 ? "var(--loss)" : "var(--text)" } }, "$", r.oferOwed.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--gold)" } }, r.wonWeeks.length > 0 ? r.wonWeeks.map((w) => `Wk ${w}`).join(", ") : "\u2014"));
   })))));
 }
 function HistoryTab({ weeksData, picksData, roster, historyWeek, setHistoryWeek, standings, identity, authed }) {
@@ -1055,10 +1037,9 @@ function HistoryTab({ weeksData, picksData, roster, historyWeek, setHistoryWeek,
     },
     weekNums.map((wn) => /* @__PURE__ */ React.createElement("option", { key: wn, value: wn }, "Week ", wn))
   )), leagueStat && /* @__PURE__ */ React.createElement("div", { className: "mb-4 text-xs mono-font px-3 py-2 rounded", style: { background: "rgba(212,175,55,0.1)", color: "var(--gold)" } }, "League week accuracy: ", leagueStat.correct, "/", leagueStat.total, " (", leagueStat.pct.toFixed(1), "%)"), !weekLocked && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mb-3", style: { color: "var(--muted)" } }, "Other players' picks reveal one at a time \u2014 as soon as a game starts, everyone's pick on that game becomes visible. Anything not yet revealed shows all at once at the deadline. You can always see your own picks below."), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, roster.usernames.map((u) => {
-    var _a;
     const isOwnRow = !!authed && identity.trim() === u;
     const userPicks = picksData[effectiveWeek] && picksData[effectiveWeek][u] || [];
-    return /* @__PURE__ */ React.createElement(TicketCard, { key: u }, /* @__PURE__ */ React.createElement("div", { className: "mb-2 font-medium display-font" }, ((_a = roster.teamNames) == null ? void 0 : _a[u]) || u, " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs mono-font", style: { color: "var(--muted)" } }, "(", u, ")"), isOwnRow && /* @__PURE__ */ React.createElement("span", { className: "ml-2" }, /* @__PURE__ */ React.createElement(Pill, { tone: "win" }, "you"))), userPicks.length === 0 && weekLocked ? /* @__PURE__ */ React.createElement("div", { className: "text-xs mono-font", style: { color: "var(--loss)" } }, "No picks submitted \u2014 counted as 5 losses.") : /* @__PURE__ */ React.createElement("table", { className: "w-full text-xs mono-font" }, /* @__PURE__ */ React.createElement("tbody", null, userPicks.map((p) => {
+    return /* @__PURE__ */ React.createElement(TicketCard, { key: u }, /* @__PURE__ */ React.createElement("div", { className: "mb-2 font-medium display-font" }, u, isOwnRow && /* @__PURE__ */ React.createElement("span", { className: "ml-2" }, /* @__PURE__ */ React.createElement(Pill, { tone: "win" }, "you"))), userPicks.length === 0 && weekLocked ? /* @__PURE__ */ React.createElement("div", { className: "text-xs mono-font", style: { color: "var(--loss)" } }, "No picks submitted \u2014 counted as 5 losses.") : /* @__PURE__ */ React.createElement("table", { className: "w-full text-xs mono-font" }, /* @__PURE__ */ React.createElement("tbody", null, userPicks.map((p) => {
       const game = week.games.find((g) => g.id === p.gameId);
       if (!game) return null;
       if (!isOwnRow && !isPickRevealed(game, week)) {
@@ -1165,7 +1146,7 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
     const keys = seasonKeys(id);
     await Promise.all([
       saveJSON(keys.meta, { currentWeek: 1 }),
-      saveJSON(keys.roster, { usernames: [], teamNames: {}, locked: false, pinnedCount: null }),
+      saveJSON(keys.roster, { usernames: [], locked: false, pinnedCount: null }),
       saveJSON(keys.weeks, {}),
       saveJSON(keys.picks, {}),
       saveJSON(keys.ledger, { adjustments: [] })
@@ -1310,25 +1291,23 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
   const buildWeekPicksRows = () => {
     const week = weeksData[meta.currentWeek];
     if (!week) return null;
-    const headers = ["Team", "Game", "Bet Type", "Selection", "Outcome"];
+    const headers = ["Username", "Game", "Bet Type", "Selection", "Outcome"];
     const rows = [];
     roster.usernames.forEach((u) => {
-      var _a2, _b2;
       const picks = picksData[meta.currentWeek] && picksData[meta.currentWeek][u] || [];
       if (picks.length === 0) {
-        rows.push([((_a2 = roster.teamNames) == null ? void 0 : _a2[u]) || u, "", "", "no pick", "loss"]);
+        rows.push([u, "", "", "no pick", "loss"]);
       } else {
         picks.slice(0, PICKS_PER_WEEK).forEach((p) => {
-          var _a3;
           const game = week.games.find((g) => g.id === p.gameId);
           if (!game) return;
           const opt = BET_OPTIONS(game)[p.type].find((o) => o.value === p.selection);
           const outcome = scorePick(p, game);
-          rows.push([((_a3 = roster.teamNames) == null ? void 0 : _a3[u]) || u, game.label, p.type === "spread" ? "Spread" : "Over/Under", (opt == null ? void 0 : opt.label) || p.selection, outcome]);
+          rows.push([u, game.label, p.type === "spread" ? "Spread" : "Over/Under", (opt == null ? void 0 : opt.label) || p.selection, outcome]);
         });
       }
       for (let i = picks.length; i < PICKS_PER_WEEK; i++) {
-        rows.push([((_b2 = roster.teamNames) == null ? void 0 : _b2[u]) || u, "", "", "no pick", "loss"]);
+        rows.push([u, "", "", "no pick", "loss"]);
       }
       rows.push(["", "", "", "", ""]);
     });
@@ -1350,13 +1329,12 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
     flash(ok ? "Colored Excel file downloaded." : "Download was blocked \u2014 try clicking the button again.");
   };
   const exportSeasonXlsx = () => {
-    const headers = ["Username", "Team", "Wins", "Losses", "Win %", "Owed", "Earnings", "O-fer", "Balance", "Weeks Won"];
+    const headers = ["Username", "Wins", "Losses", "Win %", "Owed", "Earnings", "O-fer", "Balance", "Weeks Won"];
     const rows = standings.rows.map((r) => {
       const pctFraction = r.wins + r.losses ? r.wins / (r.wins + r.losses) : 0;
       const balance = r.totalWon - r.totalPaid - r.oferOwed;
       return [
         r.username,
-        r.teamName,
         r.wins,
         r.losses,
         pctFraction,
@@ -1374,7 +1352,7 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
     const totalOfer = standings.rows.reduce((a, r) => a + r.oferOwed, 0);
     const totalBalance = totalEarnings - totalOwed - totalOfer;
     const cumulativePct = totalWins + totalLosses ? totalWins / (totalWins + totalLosses) : 0;
-    rows.push(["TOTAL", "", totalWins, totalLosses, cumulativePct, totalOwed, totalEarnings, totalOfer, totalBalance, ""]);
+    rows.push(["TOTAL", totalWins, totalLosses, cumulativePct, totalOwed, totalEarnings, totalOfer, totalBalance, ""]);
     const totalsRowIdx = rows.length - 1;
     const pctCol = headers.indexOf("Win %");
     const owedCol = headers.indexOf("Owed");
@@ -1414,7 +1392,6 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
     const week1 = { games: [g1, g2, g3], deadline, locked: false };
     const newRoster = {
       usernames: ["alice", "bob", "carol"],
-      teamNames: { alice: "Alice's Aces", bob: "Bob's Bombers", carol: "Carol's Crew" },
       locked: false,
       pinnedCount: null
     };
@@ -1460,7 +1437,7 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
       setConfirmClearAll(true);
       return;
     }
-    onRosterChange({ usernames: [], teamNames: {}, locked: false, pinnedCount: null });
+    onRosterChange({ usernames: [], locked: false, pinnedCount: null });
     onWeeksChange({});
     onPicksChange({});
     onLedgerChange({ adjustments: [] });
@@ -1528,10 +1505,7 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
     if (!newUser.trim() || roster.usernames.includes(newUser.trim())) return;
     onRosterChange({ ...roster, usernames: [...roster.usernames, newUser.trim()] });
     setNewUser("");
-  }, className: "px-3 py-1.5 rounded text-sm display-font", style: { background: "var(--gold)", color: "#12161C" } }, "Add")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 mb-3" }, roster.usernames.map((u) => {
-    var _a2;
-    return /* @__PURE__ */ React.createElement("span", { key: u, className: "px-2 py-1 rounded text-xs mono-font flex items-center gap-1", style: { background: "var(--surface)" } }, ((_a2 = roster.teamNames) == null ? void 0 : _a2[u]) || u, /* @__PURE__ */ React.createElement("button", { onClick: () => onRosterChange({ ...roster, usernames: roster.usernames.filter((x) => x !== u) }), style: { color: "var(--loss)" } }, "\xD7"));
-  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: roster.locked, onChange: (e) => onRosterChange({ ...roster, locked: e.target.checked }) }), "Roster locked (new usernames can't join)"), /* @__PURE__ */ React.createElement("button", { onClick: lockRosterAndPin, className: "px-2 py-1 rounded text-xs display-font", style: { background: "var(--surface)", color: "var(--gold)" } }, "Lock & pin pot count (", roster.usernames.length, ")")), roster.pinnedCount != null && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-1", style: { color: "var(--muted)" } }, "Pot is fixed at $", ENTRY_FEE, " \xD7 ", roster.pinnedCount, " players/week.")), /* @__PURE__ */ React.createElement(Section, { title: "Player Passwords" }, /* @__PURE__ */ React.createElement("div", { className: "space-y-1 mb-4" }, roster.usernames.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs", style: { color: "var(--muted)" } }, "No players on the roster yet."), roster.usernames.map((u) => /* @__PURE__ */ React.createElement("div", { key: u, className: "flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded", style: { background: "var(--surface)" } }, /* @__PURE__ */ React.createElement("span", null, u, " ", /* @__PURE__ */ React.createElement(Pill, { tone: (passwords == null ? void 0 : passwords[u]) ? "win" : "muted" }, (passwords == null ? void 0 : passwords[u]) ? "protected" : "no password")), (passwords == null ? void 0 : passwords[u]) && /* @__PURE__ */ React.createElement("button", { onClick: () => resetPassword(u), className: "px-2 py-0.5 rounded", style: { color: "var(--loss)" } }, "Reset")))), /* @__PURE__ */ React.createElement("p", { className: "text-xs uppercase tracking-wide mb-2", style: { color: "var(--muted)" } }, "Assign a password directly (e.g. a temporary one after a reset)"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, /* @__PURE__ */ React.createElement("select", { value: pwFormUser, onChange: (e) => setPwFormUser(e.target.value), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Select player\u2026"), roster.usernames.map((u) => /* @__PURE__ */ React.createElement("option", { key: u, value: u }, u))), /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "new password", value: pwFormValue, onChange: (e) => setPwFormValue(e.target.value), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() })), /* @__PURE__ */ React.createElement("button", { onClick: setPasswordDirect, className: "w-full py-2 rounded text-sm display-font", style: { background: "var(--gold)", color: "#12161C" } }, "Set Password"), pwFormMsg && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--gold)" } }, pwFormMsg), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--muted)" } }, "Passwords are hashed (SHA-256) before being stored \u2014 not plain text \u2014 but this is still a casual-league safeguard, not bank-grade security. They're global, shared across every season, not tied to this one."))), adminSection === "weekly" && /* @__PURE__ */ React.createElement(Section, { title: "Current Week" }, /* @__PURE__ */ React.createElement("div", { className: "p-3 rounded-lg mb-3", style: { background: "rgba(212,175,55,0.15)", border: "2px solid var(--gold)" } }, /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-widest mb-1", style: { color: "var(--gold)" } }, "You are editing"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(
+  }, className: "px-3 py-1.5 rounded text-sm display-font", style: { background: "var(--gold)", color: "#12161C" } }, "Add")), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 mb-3" }, roster.usernames.map((u) => /* @__PURE__ */ React.createElement("span", { key: u, className: "px-2 py-1 rounded text-xs mono-font flex items-center gap-1", style: { background: "var(--surface)" } }, u, /* @__PURE__ */ React.createElement("button", { onClick: () => onRosterChange({ ...roster, usernames: roster.usernames.filter((x) => x !== u) }), style: { color: "var(--loss)" } }, "\xD7")))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: roster.locked, onChange: (e) => onRosterChange({ ...roster, locked: e.target.checked }) }), "Roster locked (new usernames can't join)"), /* @__PURE__ */ React.createElement("button", { onClick: lockRosterAndPin, className: "px-2 py-1 rounded text-xs display-font", style: { background: "var(--surface)", color: "var(--gold)" } }, "Lock & pin pot count (", roster.usernames.length, ")")), roster.pinnedCount != null && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-1", style: { color: "var(--muted)" } }, "Pot is fixed at $", ENTRY_FEE, " \xD7 ", roster.pinnedCount, " players/week.")), /* @__PURE__ */ React.createElement(Section, { title: "Player Passwords" }, /* @__PURE__ */ React.createElement("div", { className: "space-y-1 mb-4" }, roster.usernames.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs", style: { color: "var(--muted)" } }, "No players on the roster yet."), roster.usernames.map((u) => /* @__PURE__ */ React.createElement("div", { key: u, className: "flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded", style: { background: "var(--surface)" } }, /* @__PURE__ */ React.createElement("span", null, u, " ", /* @__PURE__ */ React.createElement(Pill, { tone: (passwords == null ? void 0 : passwords[u]) ? "win" : "muted" }, (passwords == null ? void 0 : passwords[u]) ? "protected" : "no password")), (passwords == null ? void 0 : passwords[u]) && /* @__PURE__ */ React.createElement("button", { onClick: () => resetPassword(u), className: "px-2 py-0.5 rounded", style: { color: "var(--loss)" } }, "Reset")))), /* @__PURE__ */ React.createElement("p", { className: "text-xs uppercase tracking-wide mb-2", style: { color: "var(--muted)" } }, "Assign a password directly (e.g. a temporary one after a reset)"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, /* @__PURE__ */ React.createElement("select", { value: pwFormUser, onChange: (e) => setPwFormUser(e.target.value), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Select player\u2026"), roster.usernames.map((u) => /* @__PURE__ */ React.createElement("option", { key: u, value: u }, u))), /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "new password", value: pwFormValue, onChange: (e) => setPwFormValue(e.target.value), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() })), /* @__PURE__ */ React.createElement("button", { onClick: setPasswordDirect, className: "w-full py-2 rounded text-sm display-font", style: { background: "var(--gold)", color: "#12161C" } }, "Set Password"), pwFormMsg && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--gold)" } }, pwFormMsg), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--muted)" } }, "Passwords are hashed (SHA-256) before being stored \u2014 not plain text \u2014 but this is still a casual-league safeguard, not bank-grade security. They're global, shared across every season, not tied to this one."))), adminSection === "weekly" && /* @__PURE__ */ React.createElement(Section, { title: "Current Week" }, /* @__PURE__ */ React.createElement("div", { className: "p-3 rounded-lg mb-3", style: { background: "rgba(212,175,55,0.15)", border: "2px solid var(--gold)" } }, /* @__PURE__ */ React.createElement("p", { className: "text-[10px] uppercase tracking-widest mb-1", style: { color: "var(--gold)" } }, "You are editing"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement(
     "select",
     {
       value: meta.currentWeek,
@@ -1568,13 +1542,7 @@ function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passw
     var _a2, _b2;
     const result = computeGameResult(g);
     return /* @__PURE__ */ React.createElement(TicketCard, { key: g.id }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-sm" }, g.label), /* @__PURE__ */ React.createElement("button", { onClick: () => removeGame(g.id), className: "text-xs", style: { color: "var(--loss)" } }, "remove")), /* @__PURE__ */ React.createElement("div", { className: "text-xs mono-font mb-2", style: { color: "var(--muted)" } }, g.teamA, " ", fmtSpread(g.spreadA), " \xB7 ", g.teamB, " ", fmtSpread(-Number(g.spreadA || 0)), " \xB7 O/U ", g.total, " ", g.kickoff && /* @__PURE__ */ React.createElement(React.Fragment, null, "\xB7 kickoff ", fmtKickoff(g.kickoff)), " ", isGameLocked(g) && /* @__PURE__ */ React.createElement(Pill, { tone: "loss" }, "closed")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, /* @__PURE__ */ React.createElement("input", { placeholder: `${g.teamA} final`, value: (_a2 = g.finalScoreA) != null ? _a2 : "", onChange: (e) => updateGame(g.id, { finalScoreA: e.target.value === "" ? null : Number(e.target.value) }), className: "px-2 py-1.5 rounded text-xs", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { placeholder: `${g.teamB} final`, value: (_b2 = g.finalScoreB) != null ? _b2 : "", onChange: (e) => updateGame(g.id, { finalScoreB: e.target.value === "" ? null : Number(e.target.value) }), className: "px-2 py-1.5 rounded text-xs", style: inputStyle() })), result && /* @__PURE__ */ React.createElement("div", { className: "text-xs mono-font" }, "Cover: ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--gold)" } }, result.spreadWinner === "push" ? "push" : result.spreadWinner === "teamA" ? g.teamA : g.teamB), " \xB7 Total: ", /* @__PURE__ */ React.createElement("span", { style: { color: "var(--gold)" } }, result.totalResult)));
-  }))), adminSection === "player" && /* @__PURE__ */ React.createElement(Section, { title: "Correct Monies Owed" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, /* @__PURE__ */ React.createElement("select", { value: adjForm.username, onChange: (e) => setAdjForm({ ...adjForm, username: e.target.value }), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Select player\u2026"), roster.usernames.map((u) => {
-    var _a2;
-    return /* @__PURE__ */ React.createElement("option", { key: u, value: u }, ((_a2 = roster.teamNames) == null ? void 0 : _a2[u]) || u);
-  })), /* @__PURE__ */ React.createElement("select", { value: adjForm.field, onChange: (e) => setAdjForm({ ...adjForm, field: e.target.value }), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "paid" }, "Adjust amount paid"), /* @__PURE__ */ React.createElement("option", { value: "won" }, "Adjust amount won")), /* @__PURE__ */ React.createElement("input", { placeholder: "amount (use negative to subtract)", value: adjForm.amount, onChange: (e) => setAdjForm({ ...adjForm, amount: e.target.value }), className: "px-2 py-1.5 rounded text-sm col-span-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { placeholder: "note (optional)", value: adjForm.note, onChange: (e) => setAdjForm({ ...adjForm, note: e.target.value }), className: "px-2 py-1.5 rounded text-sm col-span-2", style: inputStyle() })), /* @__PURE__ */ React.createElement("button", { onClick: addAdjustment, className: "w-full py-2 rounded text-sm display-font mb-3", style: { background: "var(--gold)", color: "#12161C" } }, "Add Adjustment"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, (ledger.adjustments || []).map((a) => {
-    var _a2;
-    return /* @__PURE__ */ React.createElement("div", { key: a.id, className: "flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded", style: { background: "var(--surface)" } }, /* @__PURE__ */ React.createElement("span", null, ((_a2 = roster.teamNames) == null ? void 0 : _a2[a.username]) || a.username, ": ", a.field, " ", a.amount >= 0 ? "+" : "", a.amount, " ", a.note && `(${a.note})`), /* @__PURE__ */ React.createElement("button", { onClick: () => removeAdjustment(a.id), style: { color: "var(--loss)" } }, "\xD7"));
-  }))));
+  }))), adminSection === "player" && /* @__PURE__ */ React.createElement(Section, { title: "Correct Monies Owed" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" }, /* @__PURE__ */ React.createElement("select", { value: adjForm.username, onChange: (e) => setAdjForm({ ...adjForm, username: e.target.value }), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Select player\u2026"), roster.usernames.map((u) => /* @__PURE__ */ React.createElement("option", { key: u, value: u }, u))), /* @__PURE__ */ React.createElement("select", { value: adjForm.field, onChange: (e) => setAdjForm({ ...adjForm, field: e.target.value }), className: "px-2 py-1.5 rounded text-sm", style: inputStyle() }, /* @__PURE__ */ React.createElement("option", { value: "paid" }, "Adjust amount paid"), /* @__PURE__ */ React.createElement("option", { value: "won" }, "Adjust amount won")), /* @__PURE__ */ React.createElement("input", { placeholder: "amount (use negative to subtract)", value: adjForm.amount, onChange: (e) => setAdjForm({ ...adjForm, amount: e.target.value }), className: "px-2 py-1.5 rounded text-sm col-span-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { placeholder: "note (optional)", value: adjForm.note, onChange: (e) => setAdjForm({ ...adjForm, note: e.target.value }), className: "px-2 py-1.5 rounded text-sm col-span-2", style: inputStyle() })), /* @__PURE__ */ React.createElement("button", { onClick: addAdjustment, className: "w-full py-2 rounded text-sm display-font mb-3", style: { background: "var(--gold)", color: "#12161C" } }, "Add Adjustment"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, (ledger.adjustments || []).map((a) => /* @__PURE__ */ React.createElement("div", { key: a.id, className: "flex items-center justify-between text-xs mono-font px-2 py-1.5 rounded", style: { background: "var(--surface)" } }, /* @__PURE__ */ React.createElement("span", null, a.username, ": ", a.field, " ", a.amount >= 0 ? "+" : "", a.amount, " ", a.note && `(${a.note})`), /* @__PURE__ */ React.createElement("button", { onClick: () => removeAdjustment(a.id), style: { color: "var(--loss)" } }, "\xD7"))))));
 }
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ React.createElement(PickemLeague, null));
