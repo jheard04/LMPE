@@ -81,7 +81,7 @@
 </script>
 
 <script>
-  const { useState, useEffect, useMemo } = React;
+  const { useState, useEffect, useMemo, useRef } = React;
 
   const DEFAULT_SEASON_NAME = "LMPE 2026";
 const KEYS = {
@@ -557,6 +557,7 @@ function PickemLeague() {
   const [adminRecoveryHash, setAdminRecoveryHash] = useState(null);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [identity, setIdentity] = useState("");
+  const pwInputRef = useRef(null);
   const [authedUser, setAuthedUser] = useState(null);
   const [pwInput, setPwInput] = useState("");
   const [authMsg, setAuthMsg] = useState("");
@@ -721,20 +722,33 @@ function PickemLeague() {
         .display-font { font-family: 'Oswald', sans-serif; letter-spacing: 0.02em; }
         .mono-font { font-family: 'JetBrains Mono', monospace; }
         select, input, textarea { color-scheme: dark; }
-      `), /* @__PURE__ */ React.createElement("div", { className: "max-w-3xl mx-auto px-4 py-6" }, /* @__PURE__ */ React.createElement("header", { className: "flex flex-wrap items-start justify-between gap-3 mb-4 pb-4", style: { borderBottom: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "display-font text-2xl font-bold", style: { color: "var(--gold)" } }, viewingSeason == null ? void 0 : viewingSeason.name), seasons.list.length > 1 && /* @__PURE__ */ React.createElement("select", { value: viewingSeasonId, onChange: (e) => setViewingSeasonId(e.target.value), className: "mt-2 px-2 py-1 rounded text-xs", style: inputStyle() }, seasons.list.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, s.name, s.id === seasons.activeSeasonId ? " (current)" : " (archived)")))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-end gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("label", { className: "block text-[10px] uppercase tracking-wider mb-1", style: { color: "var(--muted)" } }, "username"), /* @__PURE__ */ React.createElement("input", { value: identity, onChange: (e) => persistIdentity(e.target.value), placeholder: "username", className: "px-2 py-1 rounded text-sm text-right w-28", style: inputStyle() })), identity.trim() && !authed && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+      `), /* @__PURE__ */ React.createElement("div", { className: "max-w-3xl mx-auto px-4 py-6" }, /* @__PURE__ */ React.createElement("header", { className: "flex flex-wrap items-start justify-between gap-3 mb-4 pb-4", style: { borderBottom: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "display-font text-2xl font-bold", style: { color: "var(--gold)" } }, viewingSeason == null ? void 0 : viewingSeason.name), seasons.list.length > 1 && /* @__PURE__ */ React.createElement("select", { value: viewingSeasonId, onChange: (e) => setViewingSeasonId(e.target.value), className: "mt-2 px-2 py-1 rounded text-xs", style: inputStyle() }, seasons.list.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, s.name, s.id === seasons.activeSeasonId ? " (current)" : " (archived)")))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-end gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("label", { className: "block text-[10px] uppercase tracking-wider mb-1", style: { color: "var(--muted)" } }, "username"), /* @__PURE__ */ React.createElement(
     "input",
     {
+      value: identity,
+      onChange: (e) => persistIdentity(e.target.value),
+      placeholder: "username",
+      onKeyDown: (e) => {
+        var _a2;
+        if (e.key === "Enter") (_a2 = pwInputRef.current) == null ? void 0 : _a2.focus();
+      },
+      className: "px-2 py-1 rounded text-sm text-right w-28",
+      style: inputStyle()
+    }
+  )), identity.trim() && !authed && /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("label", { className: "block text-[10px] uppercase tracking-wider mb-1", style: { color: "var(--muted)" } }, hasPasswordSet ? "password" : "set a password"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      ref: pwInputRef,
       type: "password",
       value: pwInput,
       onChange: (e) => setPwInput(e.target.value),
-      placeholder: hasPasswordSet ? "password" : "set a password",
       onKeyDown: (e) => {
         if (e.key === "Enter") handleUnlockOrClaim();
       },
-      className: "px-2 py-1 rounded text-sm w-32",
+      className: "px-2 py-1 rounded text-sm text-right w-28",
       style: inputStyle()
     }
-  ), /* @__PURE__ */ React.createElement("button", { onClick: handleUnlockOrClaim, className: "px-2 py-1 rounded text-xs display-font", style: { background: "var(--gold)", color: "#12161C" } }, hasPasswordSet ? "Unlock" : "Claim")), identity.trim() && authed && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Pill, { tone: "win" }, "unlocked"), /* @__PURE__ */ React.createElement(
+  ))), identity.trim() && authed && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(Pill, { tone: "win" }, "unlocked"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
@@ -1015,7 +1029,7 @@ function LeaderboardTab({ standings }) {
     }
   };
   if (rows.length === 0) return /* @__PURE__ */ React.createElement(EmptyState, { text: "No one's on the roster yet." });
-  return /* @__PURE__ */ React.createElement("div", null, standings.carryPot > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(212,175,55,0.12)", color: "var(--gold)" } }, "Carryover Pot: $", standings.carryPot.toFixed(2)), standings.oferPotTotal > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(192,82,75,0.12)", color: "var(--loss)" } }, "O-Fer Pot: $", standings.oferPotTotal.toFixed(2)), /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")), /* @__PURE__ */ React.createElement("th", { onClick: () => setSort("oferOwed"), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === "oferOwed" ? "var(--gold)" : "var(--muted)" } }, "O-fer ", sortKey === "oferOwed" ? dir === 1 ? "\u2191" : "\u2193" : ""), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "Wks Won"))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, rows.map((r, i) => {
+  return /* @__PURE__ */ React.createElement("div", null, standings.carryPot > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(212,175,55,0.12)", color: "var(--gold)" } }, "Carryover Pot: $", standings.carryPot.toFixed(2)), standings.oferPotTotal > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(192,82,75,0.12)", color: "var(--loss)" } }, "O-Fer Donations: $", standings.oferPotTotal.toFixed(2)), /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")), /* @__PURE__ */ React.createElement("th", { onClick: () => setSort("oferOwed"), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === "oferOwed" ? "var(--gold)" : "var(--muted)" } }, "O-fer ", sortKey === "oferOwed" ? dir === 1 ? "\u2191" : "\u2193" : ""), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "Wks Won"))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, rows.map((r, i) => {
     const pct = r.wins + r.losses ? Math.round(r.wins / (r.wins + r.losses) * 100) : 0;
     return /* @__PURE__ */ React.createElement("tr", { key: r.username, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium" }, r.username), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--win)" } }, r.wins), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--loss)" } }, r.losses), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.totalWon > 0 ? "var(--gold)" : "var(--text)" } }, "$", r.totalWon.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.oferOwed > 0 ? "var(--loss)" : "var(--text)" } }, "$", r.oferOwed.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--gold)" } }, r.wonWeeks.length > 0 ? r.wonWeeks.map((w) => `Wk ${w}`).join(", ") : "\u2014"));
   })))));
