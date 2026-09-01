@@ -292,6 +292,7 @@ function computeStandings(roster, weeksData, picksData, ledger) {
   let carryPot = 0;
   let oferPotTotal = 0;
   const weeklyLeagueStats = {};
+  const weeklyPotValues = {};
   weekNums.forEach((wn) => {
     var _a2;
     const week = weeksData[wn];
@@ -335,6 +336,7 @@ function computeStandings(roster, weeksData, picksData, ledger) {
         }
       });
       const potThisWeek = ENTRY_FEE * potBase + carryPot;
+      weeklyPotValues[wn] = potThisWeek;
       if (winnersThisWeek.length > 0) {
         const share = potThisWeek / winnersThisWeek.length;
         winnersThisWeek.forEach((u) => {
@@ -352,7 +354,7 @@ function computeStandings(roster, weeksData, picksData, ledger) {
     if (adj.field === "paid") stats[adj.username].totalPaid += Number(adj.amount);
     else stats[adj.username].totalWon += Number(adj.amount);
   });
-  return { rows: usernames.map((u) => stats[u]), carryPot, oferPotTotal, weeklyLeagueStats };
+  return { rows: usernames.map((u) => stats[u]), carryPot, oferPotTotal, weeklyLeagueStats, weeklyPotValues };
 }
 function buildCSV(headers, rows) {
   const esc = (v) => `"${String(v != null ? v : "").replace(/"/g, '""')}"`;
@@ -541,7 +543,7 @@ function inputStyle() {
   return { background: "var(--bg)", border: "1px solid var(--hairline)", color: "var(--text)" };
 }
 function PickemLeague() {
-  var _a, _b;
+  var _a, _b, _c;
   const [loading, setLoading] = useState(true);
   const [seasonLoading, setSeasonLoading] = useState(true);
   const [seasons, setSeasons] = useState({ list: [{ id: "season-1", name: DEFAULT_SEASON_NAME, createdAt: "" }], activeSeasonId: "season-1" });
@@ -709,7 +711,7 @@ function PickemLeague() {
   const currentWeek = weeksData[meta.currentWeek];
   const currentLocked = isWeekLocked(currentWeek);
   const standings = useMemo(() => computeStandings(roster, weeksData, picksData, ledger), [roster, weeksData, picksData, ledger]);
-  const weekPotValue = ENTRY_FEE * ((_a = roster.pinnedCount) != null ? _a : roster.usernames.length) + standings.carryPot;
+  const weekPotValue = (_b = standings.weeklyPotValues[meta.currentWeek]) != null ? _b : ENTRY_FEE * ((_a = roster.pinnedCount) != null ? _a : roster.usernames.length) + standings.carryPot;
   const authed = !!authedUser && identity.trim() !== "" && authedUser === identity.trim();
   const hasPasswordSet = !!(passwords == null ? void 0 : passwords[identity.trim()]);
   const viewingSeason = seasons.list.find((s) => s.id === viewingSeasonId) || seasons.list[0];
@@ -760,7 +762,7 @@ function PickemLeague() {
       style: { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--muted)" }
     },
     "Log out"
-  )), authMsg && /* @__PURE__ */ React.createElement("p", { className: "text-[11px]", style: { color: authMsg.includes("set") || authMsg.includes("in") ? "var(--win)" : "var(--loss)" } }, authMsg), /* @__PURE__ */ React.createElement("button", { onClick: () => setTab("admin"), className: "text-xs display-font", style: { color: tab === "admin" ? "var(--gold)" : "var(--muted)" } }, "Admin"))), isArchivedSeason && /* @__PURE__ */ React.createElement("div", { className: "mb-4 text-xs mono-font px-3 py-2 rounded", style: { background: "rgba(212,175,55,0.12)", color: "var(--gold)" } }, 'Viewing archived season \u2014 read-only. Switch to "', (_b = seasons.list.find((s) => s.id === seasons.activeSeasonId)) == null ? void 0 : _b.name, '" up top to make picks.'), /* @__PURE__ */ React.createElement("nav", { className: "flex gap-1 mb-6 p-1 rounded-md flex-wrap", style: { background: "var(--surface)" } }, [["picks", "Picks"], ["history", "Pick History"], ["leaderboard", "Season Leaderboard"], ["analytics", "NFL Team Analytics"]].map(([id, label]) => /* @__PURE__ */ React.createElement("button", { key: id, onClick: () => {
+  )), authMsg && /* @__PURE__ */ React.createElement("p", { className: "text-[11px]", style: { color: authMsg.includes("set") || authMsg.includes("in") ? "var(--win)" : "var(--loss)" } }, authMsg), /* @__PURE__ */ React.createElement("button", { onClick: () => setTab("admin"), className: "text-xs display-font", style: { color: tab === "admin" ? "var(--gold)" : "var(--muted)" } }, "Admin"))), isArchivedSeason && /* @__PURE__ */ React.createElement("div", { className: "mb-4 text-xs mono-font px-3 py-2 rounded", style: { background: "rgba(212,175,55,0.12)", color: "var(--gold)" } }, 'Viewing archived season \u2014 read-only. Switch to "', (_c = seasons.list.find((s) => s.id === seasons.activeSeasonId)) == null ? void 0 : _c.name, '" up top to make picks.'), /* @__PURE__ */ React.createElement("nav", { className: "flex gap-1 mb-6 p-1 rounded-md flex-wrap", style: { background: "var(--surface)" } }, [["picks", "Picks"], ["history", "Pick History"], ["leaderboard", "Season Leaderboard"], ["analytics", "NFL Team Analytics"]].map(([id, label]) => /* @__PURE__ */ React.createElement("button", { key: id, onClick: () => {
     setTab(id);
     if (id === "history") setHistoryWeek(meta.currentWeek);
   }, className: "tab-btn flex-1 py-2 rounded text-sm font-medium display-font min-w-[80px]", style: tab === id ? { background: "var(--gold)", color: "#12161C" } : { color: "var(--muted)" } }, label))), tab !== "admin" && comments && comments.trim() && /* @__PURE__ */ React.createElement("div", { className: "mb-4 p-3 rounded", style: { background: "var(--surface)", border: "1px solid var(--gold)", whiteSpace: "pre-wrap" } }, /* @__PURE__ */ React.createElement("p", { className: "text-sm", style: { color: "var(--text)" } }, comments)), saveMsg && /* @__PURE__ */ React.createElement("div", { className: "mb-4 text-xs mono-font px-3 py-2 rounded", style: { background: "rgba(76,154,106,0.15)", color: "var(--win)" } }, saveMsg), tab === "picks" && /* @__PURE__ */ React.createElement(
@@ -840,77 +842,59 @@ function AdminGate({ adminPass, adminRecoveryHash, onSetPass, onSetRecoveryHash,
       setCopyMsg("Couldn't copy \u2014 select and copy the text manually.");
     }
   };
+  const handleSetup = async () => {
+    if (!input || input !== confirmInput) {
+      setErr("Passwords don't match.");
+      return;
+    }
+    setErr("");
+    await finishSetup(input);
+  };
+  const handleForgotSubmit = async () => {
+    if (!recoveryInput.trim()) {
+      setErr("Enter your recovery code.");
+      return;
+    }
+    if (!newPw || newPw !== newPwConfirm) {
+      setErr("Passwords don't match.");
+      return;
+    }
+    const enteredHash = await sha256Hex(recoveryInput.trim());
+    if (enteredHash !== adminRecoveryHash) {
+      setErr("That recovery code doesn't match.");
+      return;
+    }
+    setErr("");
+    await finishSetup(newPw);
+  };
+  const handleUnlockSubmit = async () => {
+    const enteredHash = await sha256Hex(input);
+    if (enteredHash === adminPass) {
+      onUnlock();
+      return;
+    }
+    if (input === adminPass) {
+      await finishSetup(input);
+      return;
+    }
+    setErr("Wrong password.");
+  };
+  const onEnter = (fn) => (e) => {
+    if (e.key === "Enter") fn();
+  };
   if (mode === "reveal") {
     return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-2 font-medium", style: { color: "var(--gold)" } }, "Save this recovery code somewhere safe"), /* @__PURE__ */ React.createElement("p", { className: "text-xs mb-3", style: { color: "var(--muted)" } }, "This is the only time it will be shown. If you ever forget the admin password, this code is the only way back in \u2014 paste it into a password manager, a note, or email it to yourself right now."), /* @__PURE__ */ React.createElement("div", { className: "text-center py-3 mb-3 rounded mono-font text-lg", style: { background: "var(--bg)", border: "1px dashed var(--gold)", color: "var(--gold)", letterSpacing: "0.1em" } }, revealCode), /* @__PURE__ */ React.createElement("button", { onClick: copyCode, className: "w-full py-2 rounded display-font text-sm mb-2", style: { background: "var(--surface)", border: "1px solid var(--hairline)", color: "var(--text)" } }, "Copy to clipboard"), copyMsg && /* @__PURE__ */ React.createElement("p", { className: "text-xs mb-2", style: { color: "var(--gold)" } }, copyMsg), /* @__PURE__ */ React.createElement("button", { onClick: onUnlock, className: "w-full py-2 rounded display-font text-sm", style: { background: "var(--gold)", color: "#12161C" } }, "I've saved it \u2014 Continue"));
   }
   if (adminPass == null) {
-    return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-3" }, "No admin password has been set yet. Set one and share it with whoever should have admin access."), /* @__PURE__ */ React.createElement("input", { type: "password", value: input, onChange: (e) => setInput(e.target.value), placeholder: "new admin password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { type: "password", value: confirmInput, onChange: (e) => setConfirmInput(e.target.value), placeholder: "confirm password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        onClick: async () => {
-          if (!input || input !== confirmInput) {
-            setErr("Passwords don't match.");
-            return;
-          }
-          setErr("");
-          await finishSetup(input);
-        },
-        className: "w-full py-2 rounded display-font text-sm",
-        style: { background: "var(--gold)", color: "#12161C" }
-      },
-      "Set Admin Password"
-    ), err && /* @__PURE__ */ React.createElement("p", { className: "text-xs mt-2", style: { color: "var(--loss)" } }, err), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--muted)" } }, "This is a simple shared gate for a casual league, not real account security \u2014 anyone with the password gets admin access. Passwords are hashed before being stored, not kept as plain text."));
+    return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-3" }, "No admin password has been set yet. Set one and share it with whoever should have admin access."), /* @__PURE__ */ React.createElement("input", { type: "password", value: input, onChange: (e) => setInput(e.target.value), onKeyDown: onEnter(handleSetup), placeholder: "new admin password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { type: "password", value: confirmInput, onChange: (e) => setConfirmInput(e.target.value), onKeyDown: onEnter(handleSetup), placeholder: "confirm password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("button", { onClick: handleSetup, className: "w-full py-2 rounded display-font text-sm", style: { background: "var(--gold)", color: "#12161C" } }, "Set Admin Password"), err && /* @__PURE__ */ React.createElement("p", { className: "text-xs mt-2", style: { color: "var(--loss)" } }, err), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--muted)" } }, "This is a simple shared gate for a casual league, not real account security \u2014 anyone with the password gets admin access. Passwords are hashed before being stored, not kept as plain text."));
   }
   if (mode === "forgot") {
-    return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-3" }, "Enter your recovery code to set a new admin password."), /* @__PURE__ */ React.createElement("input", { value: recoveryInput, onChange: (e) => setRecoveryInput(e.target.value.toUpperCase()), placeholder: "XXXX-XXXX-XXXX", className: "w-full px-2 py-1.5 rounded text-sm mb-2 mono-font", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { type: "password", value: newPw, onChange: (e) => setNewPw(e.target.value), placeholder: "new admin password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { type: "password", value: newPwConfirm, onChange: (e) => setNewPwConfirm(e.target.value), placeholder: "confirm new password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        onClick: async () => {
-          if (!recoveryInput.trim()) {
-            setErr("Enter your recovery code.");
-            return;
-          }
-          if (!newPw || newPw !== newPwConfirm) {
-            setErr("Passwords don't match.");
-            return;
-          }
-          const enteredHash = await sha256Hex(recoveryInput.trim());
-          if (enteredHash !== adminRecoveryHash) {
-            setErr("That recovery code doesn't match.");
-            return;
-          }
-          setErr("");
-          await finishSetup(newPw);
-        },
-        className: "w-full py-2 rounded display-font text-sm mb-2",
-        style: { background: "var(--gold)", color: "#12161C" }
-      },
-      "Reset Password"
-    ), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-3" }, "Enter your recovery code to set a new admin password."), /* @__PURE__ */ React.createElement("input", { value: recoveryInput, onChange: (e) => setRecoveryInput(e.target.value.toUpperCase()), onKeyDown: onEnter(handleForgotSubmit), placeholder: "XXXX-XXXX-XXXX", className: "w-full px-2 py-1.5 rounded text-sm mb-2 mono-font", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { type: "password", value: newPw, onChange: (e) => setNewPw(e.target.value), onKeyDown: onEnter(handleForgotSubmit), placeholder: "new admin password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("input", { type: "password", value: newPwConfirm, onChange: (e) => setNewPwConfirm(e.target.value), onKeyDown: onEnter(handleForgotSubmit), placeholder: "confirm new password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("button", { onClick: handleForgotSubmit, className: "w-full py-2 rounded display-font text-sm mb-2", style: { background: "var(--gold)", color: "#12161C" } }, "Reset Password"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       setMode("unlock");
       setErr("");
     }, className: "w-full py-2 rounded display-font text-sm", style: { background: "var(--surface)", color: "var(--muted)" } }, "Back"), err && /* @__PURE__ */ React.createElement("p", { className: "text-xs mt-2", style: { color: "var(--loss)" } }, err), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mt-2", style: { color: "var(--muted)" } }, "Resetting generates a brand new recovery code \u2014 the old one stops working."));
   }
-  return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-3" }, "Enter the admin password to manage the league."), /* @__PURE__ */ React.createElement("input", { type: "password", value: input, onChange: (e) => setInput(e.target.value), placeholder: "admin password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: async () => {
-        const enteredHash = await sha256Hex(input);
-        if (enteredHash === adminPass) {
-          onUnlock();
-          return;
-        }
-        if (input === adminPass) {
-          await finishSetup(input);
-          return;
-        }
-        setErr("Wrong password.");
-      },
-      className: "w-full py-2 rounded display-font text-sm mb-2",
-      style: { background: "var(--gold)", color: "#12161C" }
-    },
-    "Unlock Admin"
-  ), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  return /* @__PURE__ */ React.createElement(TicketCard, { accent: "var(--gold)" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm mb-3" }, "Enter the admin password to manage the league."), /* @__PURE__ */ React.createElement("input", { type: "password", value: input, onChange: (e) => setInput(e.target.value), onKeyDown: onEnter(handleUnlockSubmit), placeholder: "admin password", className: "w-full px-2 py-1.5 rounded text-sm mb-2", style: inputStyle() }), /* @__PURE__ */ React.createElement("button", { onClick: handleUnlockSubmit, className: "w-full py-2 rounded display-font text-sm mb-2", style: { background: "var(--gold)", color: "#12161C" } }, "Unlock Admin"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setMode("forgot");
     setErr("");
   }, className: "w-full text-xs", style: { color: "var(--muted)" } }, "Forgot password?"), err && /* @__PURE__ */ React.createElement("p", { className: "text-xs mt-2", style: { color: "var(--loss)" } }, err));
@@ -1031,7 +1015,7 @@ function LeaderboardTab({ standings }) {
   if (rows.length === 0) return /* @__PURE__ */ React.createElement(EmptyState, { text: "No one's on the roster yet." });
   return /* @__PURE__ */ React.createElement("div", null, standings.carryPot > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(212,175,55,0.12)", color: "var(--gold)" } }, "Carryover Pot: $", standings.carryPot.toFixed(2)), standings.oferPotTotal > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3 text-xs mono-font px-2 py-2 rounded", style: { background: "rgba(192,82,75,0.12)", color: "var(--loss)" } }, "O-Fer Donations: $", standings.oferPotTotal.toFixed(2)), /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")), /* @__PURE__ */ React.createElement("th", { onClick: () => setSort("oferOwed"), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === "oferOwed" ? "var(--gold)" : "var(--muted)" } }, "O-fer ", sortKey === "oferOwed" ? dir === 1 ? "\u2191" : "\u2193" : ""), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "Wks Won"))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, rows.map((r, i) => {
     const pct = r.wins + r.losses ? Math.round(r.wins / (r.wins + r.losses) * 100) : 0;
-    return /* @__PURE__ */ React.createElement("tr", { key: r.username, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium" }, r.username), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--win)" } }, r.wins), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--loss)" } }, r.losses), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.totalWon > 0 ? "var(--gold)" : "var(--text)" } }, "$", r.totalWon.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.oferOwed > 0 ? "var(--loss)" : "var(--text)" } }, "$", r.oferOwed.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--gold)" } }, r.wonWeeks.length > 0 ? r.wonWeeks.map((w) => `Wk ${w}`).join(", ") : "\u2014"));
+    return /* @__PURE__ */ React.createElement("tr", { key: r.username, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium" }, r.username), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--win)" } }, r.wins), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--loss)" } }, r.losses), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.totalWon > 0 ? "var(--gold)" : "var(--text)" } }, "$", r.totalWon.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: r.oferOwed > 0 ? "var(--loss)" : "var(--text)" } }, "$", r.oferOwed.toFixed(2)), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: "var(--gold)" } }, r.wonWeeks.length > 0 ? r.wonWeeks.join(", ") : "\u2014"));
   })))));
 }
 function HistoryTab({ weeksData, picksData, roster, historyWeek, setHistoryWeek, standings, identity, authed }) {
@@ -1069,7 +1053,35 @@ function HistoryTab({ weeksData, picksData, roster, historyWeek, setHistoryWeek,
 }
 function TeamAnalyticsTab({ weeksData }) {
   const teamStats = computeTeamAnalytics(weeksData);
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mb-3", style: { color: "var(--muted)" } }, "Built from every game with a final score entered this season \u2014 ATS record is against-the-spread cover/loss/push, O/U is how games involving that team finished relative to the total, both split by home vs away."), teamStats.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No scored games yet this season." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "Team"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "ATS Home (W-L-P)"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "ATS Away (W-L-P)"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "ATS %"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "O/U Home (O-U-P)"), /* @__PURE__ */ React.createElement("th", { className: "px-2 py-2 text-left display-font text-xs uppercase tracking-wide", style: { color: "var(--muted)" } }, "O/U Away (O-U-P)"))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, teamStats.map((t, i) => {
+  const [sortKey, setSortKey] = useState("team");
+  const [dir, setDir] = useState(1);
+  const getSortValue = (t, key) => {
+    if (key === "team") return t.team;
+    if (key === "atsHome") return t.home.atsW - t.home.atsL;
+    if (key === "atsAway") return t.away.atsW - t.away.atsL;
+    if (key === "atsPct") {
+      const w = t.home.atsW + t.away.atsW, l = t.home.atsL + t.away.atsL;
+      const decided = w + l;
+      return decided ? w / decided : -1;
+    }
+    if (key === "ouHome") return t.home.over - t.home.under;
+    if (key === "ouAway") return t.away.over - t.away.under;
+    return 0;
+  };
+  const setSort = (k) => {
+    if (k === sortKey) setDir((d) => -d);
+    else {
+      setSortKey(k);
+      setDir(1);
+    }
+  };
+  const sortedStats = [...teamStats].sort((a, b) => {
+    const av = getSortValue(a, sortKey), bv = getSortValue(b, sortKey);
+    if (typeof av === "string") return av.localeCompare(bv) * dir;
+    return (av - bv) * dir;
+  });
+  const cols = [["team", "Team"], ["atsHome", "ATS Home (W-L-P)"], ["atsAway", "ATS Away (W-L-P)"], ["atsPct", "ATS %"], ["ouHome", "O/U Home (O-U-P)"], ["ouAway", "O/U Away (O-U-P)"]];
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mb-3", style: { color: "var(--muted)" } }, "Built from every game with a final score entered this season \u2014 ATS record is against-the-spread cover/loss/push, O/U is how games involving that team finished relative to the total, both split by home vs away."), teamStats.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No scored games yet this season." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, sortedStats.map((t, i) => {
     const atsW = t.home.atsW + t.away.atsW;
     const atsL = t.home.atsL + t.away.atsL;
     const atsDecided = atsW + atsL;
