@@ -679,6 +679,7 @@ function PickemLeague() {
       setAuthMsg("Enter a username first.");
       return;
     }
+    const keys = seasonKeys(viewingSeasonId);
     const existingHash = passwords == null ? void 0 : passwords[uname];
     const entered = await sha256Hex(pwInput);
     if (existingHash) {
@@ -686,11 +687,16 @@ function PickemLeague() {
         setAuthMsg("Wrong password.");
         return;
       }
-      if (roster.locked && !roster.usernames.includes(uname)) {
+      const freshRoster = await loadJSON(keys.roster, { usernames: [], locked: false, pinnedCount: null });
+      if (freshRoster.locked && !freshRoster.usernames.includes(uname)) {
         setAuthMsg("Roster is locked for this season \u2014 ask the admin to add you first.");
         return;
       }
-      if (!roster.usernames.includes(uname)) await persistRoster({ ...roster, usernames: [...roster.usernames, uname] });
+      if (!freshRoster.usernames.includes(uname)) {
+        const nextRoster = { ...freshRoster, usernames: [...freshRoster.usernames, uname] };
+        setRoster(nextRoster);
+        await saveJSON(keys.roster, nextRoster);
+      }
       setAuthedUser(uname);
       setAuthMsg("");
     } else {
@@ -698,12 +704,20 @@ function PickemLeague() {
         setAuthMsg("Set a password to claim this username.");
         return;
       }
-      if (roster.locked && !roster.usernames.includes(uname)) {
+      const freshRoster = await loadJSON(keys.roster, { usernames: [], locked: false, pinnedCount: null });
+      if (freshRoster.locked && !freshRoster.usernames.includes(uname)) {
         setAuthMsg("Roster is locked \u2014 ask the admin to add you first.");
         return;
       }
-      await persistPasswords({ ...passwords || {}, [uname]: entered });
-      if (!roster.usernames.includes(uname)) await persistRoster({ ...roster, usernames: [...roster.usernames, uname] });
+      const freshPasswords = await loadJSON(KEYS.passwords, {});
+      const nextPasswords = { ...freshPasswords, [uname]: entered };
+      setPasswords(nextPasswords);
+      await saveJSON(KEYS.passwords, nextPasswords);
+      if (!freshRoster.usernames.includes(uname)) {
+        const nextRoster = { ...freshRoster, usernames: [...freshRoster.usernames, uname] };
+        setRoster(nextRoster);
+        await saveJSON(keys.roster, nextRoster);
+      }
       setAuthedUser(uname);
       setAuthMsg("Password set \u2014 you're in.");
     }
@@ -779,10 +793,18 @@ function PickemLeague() {
       weekPotValue,
       onSavePicks: async (picks) => {
         if (!authed) return;
-        const next = { ...picksData, [meta.currentWeek]: { ...picksData[meta.currentWeek] || {}, [identity]: picks } };
-        await persistPicks(next);
-        if (!roster.locked && !roster.usernames.includes(identity.trim()) && identity.trim()) {
-          await persistRoster({ ...roster, usernames: [...roster.usernames, identity.trim()] });
+        const keys = seasonKeys(viewingSeasonId);
+        const freshPicks = await loadJSON(keys.picks, {});
+        const next = { ...freshPicks, [meta.currentWeek]: { ...freshPicks[meta.currentWeek] || {}, [identity]: picks } };
+        setPicksData(next);
+        await saveJSON(keys.picks, next);
+        if (!roster.locked && identity.trim()) {
+          const freshRoster = await loadJSON(keys.roster, { usernames: [], locked: false, pinnedCount: null });
+          if (!freshRoster.usernames.includes(identity.trim())) {
+            const nextRoster = { ...freshRoster, usernames: [...freshRoster.usernames, identity.trim()] };
+            setRoster(nextRoster);
+            await saveJSON(keys.roster, nextRoster);
+          }
         }
         flash("Picks saved.");
       }
