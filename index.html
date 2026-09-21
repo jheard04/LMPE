@@ -4,22 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>LMPE Pick 'em League</title>
-
 <script src="https://cdn.tailwindcss.com"></script>
-
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-
 <style>
   html, body { margin: 0; padding: 0; background: #0A1628; }
 </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script>
   const firebaseConfig = {
     apiKey: "AIzaSyBq1uc09gn3estwAyjIeZm78_qO-h6Ycew",
@@ -31,14 +26,11 @@
     appId: "1:868504900626:web:c30cb2e663aec8b7b434cb",
     measurementId: "G-N021LFM9G4",
   };
-
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
-
   function safeDbKey(key) {
     return key.replace(/[.#$\[\]\/]/g, "_");
   }
-
   window.storage = {
     async get(key, shared) {
       if (!shared) {
@@ -79,10 +71,8 @@
     },
   };
 </script>
-
 <script>
   const { useState, useEffect, useMemo, useRef } = React;
-
   const DEFAULT_SEASON_NAME = "LMPE 2026";
 const KEYS = {
   seasons: "pickem:seasons",
@@ -795,13 +785,14 @@ function PickemLeague() {
         if (!authed) return;
         const keys = seasonKeys(viewingSeasonId);
         const freshPicks = await loadJSON(keys.picks, {});
-        const next = { ...freshPicks, [meta.currentWeek]: { ...freshPicks[meta.currentWeek] || {}, [identity]: picks } };
+        const uname = identity.trim();
+        const next = { ...freshPicks, [meta.currentWeek]: { ...freshPicks[meta.currentWeek] || {}, [uname]: picks } };
         setPicksData(next);
         await saveJSON(keys.picks, next);
-        if (!roster.locked && identity.trim()) {
+        if (!roster.locked && uname) {
           const freshRoster = await loadJSON(keys.roster, { usernames: [], locked: false, pinnedCount: null });
-          if (!freshRoster.usernames.includes(identity.trim())) {
-            const nextRoster = { ...freshRoster, usernames: [...freshRoster.usernames, identity.trim()] };
+          if (!freshRoster.usernames.includes(uname)) {
+            const nextRoster = { ...freshRoster, usernames: [...freshRoster.usernames, uname] };
             setRoster(nextRoster);
             await saveJSON(keys.roster, nextRoster);
           }
@@ -922,17 +913,18 @@ function AdminGate({ adminPass, adminRecoveryHash, onSetPass, onSetRecoveryHash,
   }, className: "w-full text-xs", style: { color: "var(--muted)" } }, "Forgot password?"), err && /* @__PURE__ */ React.createElement("p", { className: "text-xs mt-2", style: { color: "var(--loss)" } }, err));
 }
 function PicksTab({ identity, week, weekNum, locked, roster, picksData, authed, isArchivedSeason, weekPotValue, onSavePicks }) {
-  const existing = picksData[weekNum] && picksData[weekNum][identity] || [];
+  const uname = identity.trim();
+  const existing = picksData[weekNum] && picksData[weekNum][uname] || [];
   const [slots, setSlots] = useState(Array.from({ length: PICKS_PER_WEEK }, (_, i) => existing[i] || { id: newId(), gameId: "", type: "spread", selection: "" }));
   const [confirmData, setConfirmData] = useState(null);
   useEffect(() => {
-    const ex = picksData[weekNum] && picksData[weekNum][identity] || [];
+    const ex = picksData[weekNum] && picksData[weekNum][uname] || [];
     setSlots(Array.from({ length: PICKS_PER_WEEK }, (_, i) => ex[i] || { id: newId(), gameId: "", type: "spread", selection: "" }));
-  }, [weekNum, identity]);
+  }, [weekNum, uname]);
   if (isArchivedSeason) return /* @__PURE__ */ React.createElement(EmptyState, { text: "This is an archived season \u2014 picks are read-only. Switch to the current season up top to make picks." });
   if (!week || !week.games || week.games.length === 0) return /* @__PURE__ */ React.createElement(EmptyState, { text: "No games have been set for this week yet. Check back once the admin publishes the odds." });
-  if (!identity.trim()) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Enter your username up top to make picks." });
-  if (roster.locked && !roster.usernames.includes(identity.trim())) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Roster is locked and this username isn't on it. Ask the admin to add you." });
+  if (!uname) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Enter your username up top to make picks." });
+  if (roster.locked && !roster.usernames.includes(uname)) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Roster is locked and this username isn't on it. Ask the admin to add you." });
   if (!authed) return /* @__PURE__ */ React.createElement(EmptyState, { text: "Enter your password up top (or set one if this is your first time) to make picks." });
   const togglePick = (game, type, selection) => {
     if (locked || isGameLocked(game)) return;
