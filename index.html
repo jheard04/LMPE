@@ -238,7 +238,10 @@ function computeTeamAnalytics(weeksData) {
     if (!stats[name]) stats[name] = {
       team: name,
       home: { atsW: 0, atsL: 0, atsP: 0, over: 0, under: 0, ouP: 0 },
-      away: { atsW: 0, atsL: 0, atsP: 0, over: 0, under: 0, ouP: 0 }
+      away: { atsW: 0, atsL: 0, atsP: 0, over: 0, under: 0, ouP: 0 },
+      games: 0,
+      pointsFor: 0,
+      pointsAgainst: 0
     };
     return stats[name];
   };
@@ -246,8 +249,10 @@ function computeTeamAnalytics(weeksData) {
     (week.games || []).forEach((g) => {
       const result = computeGameResult(g);
       if (!result || !g.teamA || !g.teamB) return;
-      const away = ensure(g.teamA).away;
-      const home = ensure(g.teamB).home;
+      const awayTeam = ensure(g.teamA);
+      const homeTeam = ensure(g.teamB);
+      const away = awayTeam.away;
+      const home = homeTeam.home;
       if (result.spreadWinner === "teamA") {
         away.atsW += 1;
         home.atsL += 1;
@@ -268,6 +273,14 @@ function computeTeamAnalytics(weeksData) {
         away.ouP += 1;
         home.ouP += 1;
       }
+      const scoreA = Number(g.finalScoreA);
+      const scoreB = Number(g.finalScoreB);
+      awayTeam.games += 1;
+      awayTeam.pointsFor += scoreA;
+      awayTeam.pointsAgainst += scoreB;
+      homeTeam.games += 1;
+      homeTeam.pointsFor += scoreB;
+      homeTeam.pointsAgainst += scoreA;
     });
   });
   return Object.values(stats).sort((x, y) => x.team.localeCompare(y.team));
@@ -1080,6 +1093,8 @@ function TeamAnalyticsTab({ weeksData }) {
     }
     if (key === "ouHome") return t.home.over - t.home.under;
     if (key === "ouAway") return t.away.over - t.away.under;
+    if (key === "pf") return t.games ? t.pointsFor / t.games : 0;
+    if (key === "pa") return t.games ? t.pointsAgainst / t.games : 0;
     return 0;
   };
   const setSort = (k) => {
@@ -1094,13 +1109,15 @@ function TeamAnalyticsTab({ weeksData }) {
     if (typeof av === "string") return av.localeCompare(bv) * dir;
     return (av - bv) * dir;
   });
-  const cols = [["team", "Team"], ["atsHome", "ATS Home (W-L-P)"], ["atsAway", "ATS Away (W-L-P)"], ["atsPct", "ATS %"], ["ouHome", "O/U Home (O-U-P)"], ["ouAway", "O/U Away (O-U-P)"]];
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mb-3", style: { color: "var(--muted)" } }, "Built from every game with a final score entered this season \u2014 ATS record is against-the-spread cover/loss/push, O/U is how games involving that team finished relative to the total, both split by home vs away."), teamStats.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No scored games yet this season." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, sortedStats.map((t, i) => {
+  const cols = [["team", "Team"], ["pf", "PF"], ["pa", "PA"], ["atsHome", "ATS Home (W-L-P)"], ["atsAway", "ATS Away (W-L-P)"], ["atsPct", "ATS %"], ["ouHome", "O/U Home (O-U-P)"], ["ouAway", "O/U Away (O-U-P)"]];
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-[11px] mb-3", style: { color: "var(--muted)" } }, "Built from every game with a final score entered this season \u2014 PF/PA are each team's average points scored/allowed per game, ATS record is against-the-spread cover/loss/push, O/U is how games involving that team finished relative to the total, both split by home vs away."), teamStats.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No scored games yet this season." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-md", style: { border: "1px solid var(--hairline)" } }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--surface)" } }, cols.map(([k, label]) => /* @__PURE__ */ React.createElement("th", { key: k, onClick: () => setSort(k), className: "px-2 py-2 text-left cursor-pointer select-none display-font text-xs uppercase tracking-wide whitespace-normal", style: { color: sortKey === k ? "var(--gold)" : "var(--muted)", minWidth: "70px" } }, label, " ", sortKey === k ? dir === 1 ? "\u2191" : "\u2193" : "")))), /* @__PURE__ */ React.createElement("tbody", { className: "mono-font" }, sortedStats.map((t, i) => {
     const atsW = t.home.atsW + t.away.atsW;
     const atsL = t.home.atsL + t.away.atsL;
     const atsDecided = atsW + atsL;
     const atsPct = atsDecided ? Math.round(atsW / atsDecided * 100) : 0;
-    return /* @__PURE__ */ React.createElement("tr", { key: t.team, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium", style: { color: "var(--text)" } }, t.team), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.home.atsW, "-", t.home.atsL, "-", t.home.atsP), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.away.atsW, "-", t.away.atsL, "-", t.away.atsP), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: atsPct >= 50 ? "var(--win)" : "var(--loss)" } }, atsPct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.home.over, "-", t.home.under, "-", t.home.ouP), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.away.over, "-", t.away.under, "-", t.away.ouP));
+    const pf = t.games ? Math.round(t.pointsFor / t.games) : 0;
+    const pa = t.games ? Math.round(t.pointsAgainst / t.games) : 0;
+    return /* @__PURE__ */ React.createElement("tr", { key: t.team, style: { borderTop: "1px solid var(--hairline)", background: i % 2 ? "rgba(255,255,255,0.02)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2 font-sans font-medium", style: { color: "var(--text)" } }, t.team), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pf), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, pa), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.home.atsW, "-", t.home.atsL, "-", t.home.atsP), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.away.atsW, "-", t.away.atsL, "-", t.away.atsP), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2", style: { color: atsPct >= 50 ? "var(--win)" : "var(--loss)" } }, atsPct, "%"), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.home.over, "-", t.home.under, "-", t.home.ouP), /* @__PURE__ */ React.createElement("td", { className: "px-2 py-2" }, t.away.over, "-", t.away.under, "-", t.away.ouP));
   })))));
 }
 function AdminTab({ meta, roster, weeksData, picksData, ledger, standings, passwords, onPasswordsChange, seasons, onSeasonsChange, viewingSeasonId, onSwitchSeason, onSetAdminPass, onSetAdminRecoveryHash, onSetCurrentWeek, onRosterChange, onWeeksChange, onPicksChange, onLedgerChange, comments, onCommentsChange, flash }) {
